@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "3D Logo Generator"
+version = "1.0.0"
+id = "artifacts/3d-logo-generator"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25200
+
+[services.development]
+run = "pnpm --filter @workspace/3d-logo-generator run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/3d-logo-generator", "run", "build" ]
+publicDir = "artifacts/3d-logo-generator/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25200"
+BASE_PATH = "/"

@@ -1,0 +1,436 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║         3D LOGO GENERATOR — DETAIL PRESERVATION FIX PROMPT          ║
+║     Fixes: loss of internal structure, single blob output issue      ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+The current implementation only traces the outermost alpha/dark boundary
+of the image and extrudes it as one single shape. This loses ALL internal
+detail — faces, features, colors, and structure collapse into one blob.
+
+This prompt replaces the entire image-to-3D pipeline with a multi-strategy
+system that preserves visual detail. Implement ALL three strategies and let
+the user pick which one to use via a toggle in the sidebar.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## ROOT CAUSE OF THE BUG — READ THIS FIRST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Current broken flow:
+  1. Read alpha channel
+  2. marchingSquares finds ONE outer contour
+  3. ExtrudeGeometry on that single contour
+  4. Apply one flat material
+  Result: everything merges into a single featureless blob ❌
+
+Correct flow:
+  1. Read BOTH alpha AND color data
+  2. Segment image into multiple color/region layers
+  3. Extrude each layer at a different Z depth
+  4. Apply image texture on the front face
+  Result: full detail preserved, layered 3D structure ✓
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## STRATEGY 1 — TEXTURE MAPPED EXTRUSION (Default, Always Works)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This is the PRIMARY strategy. It ALWAYS produces a good result.
+
+How it works:
+- Extrude the outer silhouette as before
+- But apply the ORIGINAL IMAGE as a texture on the front face
+- Side/back faces use the selected material (gold, chrome, etc.)
+- This way the front always looks exactly like the original image in 3D
+
+Implementation:
+```typescript
+async function buildTexturedMesh(
+  file: File,
+  options: ShapeOptions
+): Promise<THREE.Group> {
+  // Step 1: Get outer contour shape (existing logic, keep as is)
+  const shapes = await imageToOutlineShape(file)
+
+  // Step 2: Create the extruded geometry
+  const extrudeSettings = {
+    depth: options.thickness / 40,
+    bevelEnabled: options.bevel,
+    bevelThickness: 0.01,
+    bevelSize: 0.008,
+    bevelSegments: 4,
+    curveSegments: 16,
+  }
+  const geometry = new THREE.ExtrudeGeometry(shapes, extrudeSettings)
+  geometry.center()
+
+  // Step 3: Split geometry into two material groups
+  // Group 0 = front face, Group 1 = side + back faces
+  // THREE.ExtrudeGeometry automatically creates 2 groups:
+  //   groups[0] = front face (materialIndex 0)
+  //   groups[1] = side + back (materialIndex 1)
+
+  // Step 4: Load original image as texture for front face
+  const frontTexture = await loadFileAsTexture(file)
+  frontTexture.flipY = false
+  frontTexture.colorSpace = THREE.SRGBColorSpace
+
+  // CRITICAL: Set UV mapping so texture aligns with the shape
+  // ExtrudeGeometry UVs on front face go from 0-1 matching shape bounds
+  // We need to remap them to match the original image dimensions
+  remapFrontFaceUVs(geometry)
+
+  const frontMaterial = new THREE.MeshStandardMaterial({
+    map: frontTexture,
+    metalness: 0.1,
+    roughness: 0.4,
+    side: THREE.FrontSide,
+  })
+
+  // Step 5: Side/back material uses selected preset/custom material
+  const sideMaterial = buildSelectedMaterial(options.material)
+
+  // Step 6: Create mesh with two materials
+  const mesh = new THREE.Mesh(geometry, [frontMaterial, sideMaterial])
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+
+  return mesh
+}
+
+function remapFrontFaceUVs(geometry: THREE.ExtrudeGeometry) {
+  // ExtrudeGeometry UVs for front face are in local shape space.
+  // We need to normalize them to 0-1 range so texture maps correctly.
+  const uvAttr = geometry.attributes.uv
+  const pos = geometry.attributes.position
+
+  // Find bounds of front face UVs (group 0)
+  const group0 = geometry.groups[0]
+  let minU = Infinity, maxU = -Infinity
+  let minV = Infinity, maxV = -Infinity
+
+  for (let i = group0.start; i < group0.start + group0.count; i++) {
+    const u = uvAttr.getX(i)
+    const v = uvAttr.getY(i)
+    minU = Math.min(minU, u); maxU = Math.max(maxU, u)
+    minV = Math.min(minV, v); maxV = Math.max(maxV, v)
+  }
+
+  const rangeU = maxU - minU || 1
+  const rangeV = maxV - minV || 1
+
+  // Normalize UVs to 0-1
+  for (let i = group0.start; i < group0.start + group0.count; i++) {
+    const u = (uvAttr.getX(i) - minU) / rangeU
+    const v = (uvAttr.getY(i) - minV) / rangeV
+    uvAttr.setXY(i, u, v)
+  }
+
+  uvAttr.needsUpdate = true
+}
+
+async function loadFileAsTexture(file: File): Promise<THREE.Texture> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const loader = new THREE.TextureLoader()
+    loader.load(url, (texture) => {
+      URL.revokeObjectURL(url)
+      resolve(texture)
+    })
+  })
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## STRATEGY 2 — MULTI-LAYER COLOR SEGMENTATION (Best Visual Depth)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This creates MULTIPLE separate extruded meshes, one per color region,
+stacked at different Z depths. This is what gives the "layered badge" look.
+
+Think of it like laser-cut acrylic layers stacked on top of each other.
+
+Example for the anime avatar image:
+  Layer 1 (back, z=0.00):    black outline / background → depth 0.08
+  Layer 2 (z=0.08):          brown hair region → depth 0.06
+  Layer 3 (z=0.14):          skin/face region → depth 0.04
+  Layer 4 (z=0.18):          orange headphones → depth 0.04
+  Layer 5 (front, z=0.22):   dark outline details → depth 0.02
+
+Implementation:
+```typescript
+interface ColorLayer {
+  color: string           // dominant color of this layer
+  mask: Uint8Array        // which pixels belong to this layer
+  shape: THREE.Shape[]    // contours of this region
+  zOffset: number         // how far forward this layer sits
+  depth: number           // extrusion thickness of this layer
+}
+
+async function buildMultiLayerMesh(
+  file: File,
+  options: ShapeOptions
+): Promise<THREE.Group> {
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!
+  const img = await loadImageFromFile(file)
+
+  // Normalize to reasonable processing size
+  const maxDim = 512
+  const scale = Math.min(maxDim / img.width, maxDim / img.height, 1)
+  canvas.width = Math.floor(img.width * scale)
+  canvas.height = Math.floor(img.height * scale)
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+
+  // Step 1: K-means color clustering (group pixels into N color clusters)
+  const numLayers = options.layerCount ?? 6  // user-configurable 3-10
+  const clusters = kMeansCluster(imageData, numLayers)
+
+  // Step 2: Sort clusters by perceived brightness (dark → light = back → front)
+  clusters.sort((a, b) => getLuminance(a.color) - getLuminance(b.color))
+
+  // Step 3: For each cluster, trace contours using marching squares
+  const layers: ColorLayer[] = []
+  let zAccumulator = 0
+  const totalDepth = options.thickness / 40
+
+  clusters.forEach((cluster, i) => {
+    const contours = marchingSquares(cluster.mask, canvas.width, canvas.height)
+    if (contours.length === 0) return
+
+    const shapes = contoursToShapes(contours, canvas.width, canvas.height)
+    const layerDepth = totalDepth / clusters.length
+
+    layers.push({
+      color: cluster.color,
+      mask: cluster.mask,
+      shape: shapes,
+      zOffset: zAccumulator,
+      depth: layerDepth,
+    })
+
+    zAccumulator += layerDepth * 0.8  // slight gap between layers
+  })
+
+  // Step 4: Build a mesh for each layer
+  const group = new THREE.Group()
+
+  layers.forEach((layer) => {
+    if (layer.shape.length === 0) return
+
+    const geometry = new THREE.ExtrudeGeometry(layer.shape, {
+      depth: layer.depth,
+      bevelEnabled: false,
+      curveSegments: 12,
+    })
+
+    // Apply color from cluster to material
+    const material = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(layer.color),
+      metalness: options.material.metalness ?? 0.3,
+      roughness: options.material.roughness ?? 0.4,
+      side: THREE.DoubleSide,
+    })
+
+    // If material preset selected, tint the base color with preset
+    if (options.colorSource === 'material') {
+      applyPresetToMaterial(material, options.material)
+    }
+
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.position.z = layer.zOffset - zAccumulator / 2  // center group
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+
+    group.add(mesh)
+  })
+
+  // Center entire group
+  const box = new THREE.Box3().setFromObject(group)
+  const center = box.getCenter(new THREE.Vector3())
+  group.position.sub(center)
+
+  return group
+}
+
+// ── K-Means Color Clustering ──
+interface ColorCluster {
+  color: string           // hex color of this cluster center
+  mask: Uint8Array        // 1 = pixel belongs to this cluster
+  pixelCount: number
+}
+
+function kMeansCluster(imageData: ImageData, k: number): ColorCluster[] {
+  const { data, width, height } = imageData
+  const totalPixels = width * height
+
+  // Initialize cluster centers randomly from non-transparent pixels
+  const validPixels: [number, number, number][] = []
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] > 128) {
+      validPixels.push([data[i], data[i + 1], data[i + 2]])
+    }
+  }
+
+  if (validPixels.length === 0) return []
+
+  // Random initial centers
+  let centers: [number, number, number][] = []
+  for (let i = 0; i < k; i++) {
+    const idx = Math.floor(Math.random() * validPixels.length)
+    centers.push([...validPixels[idx]])
+  }
+
+  // Run k-means iterations
+  let assignments = new Int32Array(totalPixels).fill(-1)
+
+  for (let iter = 0; iter < 10; iter++) {
+    // Assign each pixel to nearest center
+    for (let i = 0; i < data.length; i += 4) {
+      const pixIdx = i / 4
+      if (data[i + 3] < 128) { assignments[pixIdx] = -1; continue }
+
+      const r = data[i], g = data[i + 1], b = data[i + 2]
+      let minDist = Infinity
+      let bestCenter = 0
+
+      centers.forEach(([cr, cg, cb], ci) => {
+        const dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
+        if (dist < minDist) { minDist = dist; bestCenter = ci }
+      })
+
+      assignments[pixIdx] = bestCenter
+    }
+
+    // Update centers
+    const sums = centers.map(() => [0, 0, 0, 0] as [number,number,number,number])
+    for (let i = 0; i < data.length; i += 4) {
+      const ci = assignments[i / 4]
+      if (ci < 0) continue
+      sums[ci][0] += data[i]
+      sums[ci][1] += data[i + 1]
+      sums[ci][2] += data[i + 2]
+      sums[ci][3]++
+    }
+
+    centers = sums.map(([r, g, b, n]) =>
+      n > 0 ? [r / n, g / n, b / n] : [128, 128, 128]
+    )
+  }
+
+  // Build masks and results
+  return centers.map((center, ci) => {
+    const mask = new Uint8Array(totalPixels)
+    let count = 0
+    for (let i = 0; i < totalPixels; i++) {
+      if (assignments[i] === ci) { mask[i] = 1; count++ }
+    }
+    const [r, g, b] = center.map(Math.round)
+    return {
+      color: `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`,
+      mask,
+      pixelCount: count,
+    }
+  }).filter(c => c.pixelCount > 100)  // discard tiny clusters
+}
+
+function getLuminance(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## STRATEGY 3 — HEIGHT MAP RELIEF (Surface Detail from Luminance)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This creates a SINGLE mesh but varies the Z position of each vertex
+based on the pixel's brightness in that area. Bright areas come forward,
+dark areas recede. Creates a "bas-relief" / coin-like sculpted look.
+
+Implementation:
+```typescript
+async function buildHeightMapMesh(
+  file: File,
+  options: ShapeOptions
+): Promise<THREE.Mesh> {
+  // Step 1: Create a fine grid plane (subdivision surface)
+  const resolution = 200  // 200x200 grid, adjust for performance
+  const geometry = new THREE.PlaneGeometry(1, 1, resolution, resolution)
+
+  // Step 2: Load image into canvas
+  const canvas = document.createElement('canvas')
+  canvas.width = resolution
+  canvas.height = resolution
+  const ctx = canvas.getContext('2d')!
+  const img = await loadImageFromFile(file)
+  ctx.drawImage(img, 0, 0, resolution, resolution)
+  const { data } = ctx.getImageData(0, 0, resolution, resolution)
+
+  // Step 3: Displace vertices based on pixel luminance
+  const positions = geometry.attributes.position
+  const maxDisplacement = options.thickness / 40
+
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i)  // -0.5 to 0.5
+    const y = positions.getY(i)  // -0.5 to 0.5
+
+    // Map to pixel coordinates
+    const px = Math.floor((x + 0.5) * resolution)
+    const py = Math.floor((0.5 - y) * resolution)
+    const clampX = Math.max(0, Math.min(resolution - 1, px))
+    const clampY = Math.max(0, Math.min(resolution - 1, py))
+
+    const idx = (clampY * resolution + clampX) * 4
+    const r = data[idx], g = data[idx + 1], b = data[idx + 2]
+    const alpha = data[idx + 3]
+
+    // Luminance: how bright is this pixel
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+
+    // Transparent pixels = recessed (z = -maxDisplacement)
+    // Bright pixels = most forward
+    // Dark pixels (outlines) = slightly recessed (creates groove effect)
+    const z = alpha < 128
+      ? -maxDisplacement * 0.5              // transparent: recessed
+      : luminance < 0.15
+        ? 0                                 // very dark (outlines): base level
+        : maxDisplacement * luminance       // bright areas: push forward
+
+    positions.setZ(i, z)
+  }
+
+  positions.needsUpdate = true
+  geometry.computeVertexNormals()  // recalculate normals for lighting
+
+  // Step 4: Apply image as texture + selected material properties
+  const texture = await loadFileAsTexture(file)
+  texture.colorSpace = THREE.SRGBColorSpace
+
+  const material = new THREE.MeshStandardMaterial({
+    map: texture,
+    metalness: options.material.metalness ?? 0.4,
+    roughness: options.material.roughness ?? 0.3,
+    side: THREE.DoubleSide,
+  })
+
+  // If using a preset material (gold, chrome), add tint
+  if (options.colorSource === 'material') {
+    material.map = null  // remove texture, use pure material color
+    applyPresetToMaterial(material, options.material)
+  }
+
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  return mesh
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## SIDEBAR: 3D MODE SELECTOR (New UI Control)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Add this as the FIRST section in the sidebar, above Upload:

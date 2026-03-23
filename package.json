@@ -1,0 +1,31 @@
+{
+  "name": "workspace",
+  "version": "0.0.0",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "typecheck:libs": "tsc --build",
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+  },
+  "private": true,
+  "devDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.59.1",
+    "@tailwindcss/oxide-win32-x64-msvc": "^4.2.2",
+    "lightningcss-win32-x64-msvc": "^1.32.0",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2"
+  },
+  "pnpm": {
+    "supportedArchitectures": {
+      "os": [
+        "current",
+        "win32"
+      ],
+      "cpu": [
+        "current",
+        "x64",
+        "arm64"
+      ]
+    }
+  }
+}

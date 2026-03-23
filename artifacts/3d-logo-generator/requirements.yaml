@@ -1,0 +1,28 @@
+packages:
+  "simplex-noise": "Required for procedural textures and noise generation"
+  "jszip": "Required for exporting multiple files as a ZIP archive"
+  "framer-motion": "Required for smooth UI animations and page transitions"
+  "react-colorful": "Required for custom color picking in the editor"
+  "react-dropzone": "Required for drag-and-drop file uploads"
+  "react-hot-toast": "Required for toast notifications"
+  "zustand": "Required for editor state management"
+  "lucide-react": "Icons for the UI"
+  "@react-three/drei": "Three.js helpers for React"
+  "@react-three/fiber": "React renderer for Three.js"
+  "three": "Core 3D library"
+
+images:
+  - path: "artifacts/3d-logo-generator/public/images/hero-bg.png"
+    description: "Abstract futuristic dark premium background with deep blacks and subtle glowing purple and teal glassmorphism 3d shapes, depth of field, 8k resolution"
+    aspect_ratio: "16:9"
+  - path: "artifacts/3d-logo-generator/public/images/feature-1.png"
+    description: "A polished metallic 3D logo hovering in a dark studio lighting setup with purple rim light"
+    aspect_ratio: "1:1"
+  - path: "artifacts/3d-logo-generator/public/images/feature-2.png"
+    description: "A wireframe 3D grid transitioning into a solid gold 3D logo on a dark background"
+    aspect_ratio: "1:1"
+
+notes:
+  - Application is entirely client-side. No backend API calls are made.
+  - 3D model generation relies on HTML5 Canvas API and WebGL.
+  - Image processing utilizes Web Workers conceptually, but is implemented inline with async chunks for compatibility.

@@ -1,0 +1,1516 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║     3D LOGO GENERATOR — ULTIMATE FINAL PROMPT v4.0                  ║
+║     All bugs fixed · All features included · Production ready        ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+Build a complete, production-grade 3D Logo Generator web app.
+100% client-side — zero server calls, zero AI APIs.
+Every feature fully functional, every edge case handled.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## KNOWN BUGS — FIX ALL OF THESE FIRST BEFORE ANYTHING ELSE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+BUG 1 — INVERTED MASK (Most critical):
+Background gets extruded instead of logo.
+Character appears as holes/cutouts in a rectangle.
+Cause: flood fill leaks through dark outlines into character interior,
+marking it as background.
+Fix: autoCorrectMaskInversion() + tighter flood tolerance.
+
+BUG 2 — SINGLE BLOB OUTPUT:
+All detail collapses into one featureless shape.
+Cause: Only outer silhouette traced, single flat material applied.
+Fix: 3 strategies — Textured Extrusion, Layered Colors, Relief Sculpt.
+
+BUG 3 — TEXTURE NOT VISIBLE ON FRONT FACE:
+Front face shows flat grey instead of original image colors.
+Cause: UV remapping fails, or texture loads after mesh renders,
+or flipY wrong, or colorSpace not set.
+Fix: Load texture first, center geometry first, then remap UVs,
+set flipY=false, set SRGBColorSpace.
+
+BUG 4 — BACKGROUND INCLUDED IN 3D MODEL:
+JPG images (no alpha) get fully extruded as rectangle.
+PNG with solid bg also fails.
+Cause: Alpha-only detection doesn't work for JPG or solid-bg PNG.
+Fix: Smart background detection using corner sampling + flood fill.
+
+BUG 5 — JAGGED/NOISY OUTLINE:
+Complex images produce very rough, jagged 3D edges.
+Cause: Raw marching squares output used directly.
+Fix: Gaussian smooth + Ramer-Douglas-Peucker simplification.
+
+BUG 6 — WRONG COLORS ON DARK BACKGROUND IMAGES:
+Black bg (like anime avatar JPG) treated as foreground.
+Cause: Threshold too high / flood fill too loose.
+Fix: Euclidean color distance + tight flood threshold (0.8×).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 1. TECH STACK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Core:
+- React 18 + TypeScript (strict mode) + Vite 5
+- React Router v6
+- Zustand (global state)
+- React Query (async state + caching)
+
+3D:
+- Three.js r160+
+- @react-three/fiber v8
+- @react-three/drei (OrbitControls, Environment, etc.)
+- three/examples/jsm/exporters (GLTFExporter, OBJExporter, STLExporter)
+- three/examples/jsm/environments (RoomEnvironment)
+
+Styling:
+- Tailwind CSS v3 + custom design tokens
+- shadcn/ui (base components)
+- Framer Motion (transitions + micro-animations)
+- clsx + tailwind-merge
+
+Image Processing:
+- Custom marching squares (contour tracing)
+- Custom k-means clustering (color segmentation)
+- simplex-noise (procedural textures)
+
+Export:
+- gif.js (animated GIF — worker in /public/gif.worker.js)
+- ffmpeg.wasm (MP4 in browser)
+- MediaRecorder API (WebM)
+- JSZip (Download All)
+
+Utilities:
+- react-dropzone
+- react-colorful
+- react-hot-toast
+- react-helmet-async
+
+Fonts:
+- "Clash Display" (headings) — Fontshare
+- "DM Sans" (body) — Google Fonts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 2. DESIGN SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CSS Variables:
+--bg-base:        #080808
+--bg-panel:       #101010
+--bg-card:        #161616
+--bg-elevated:    #1e1e1e
+--border:         #262626
+--border-focus:   #404040
+--accent:         #8b5cf6
+--accent-hover:   #7c3aed
+--accent-glow:    rgba(139,92,246,0.3)
+--gold:           #f59e0b
+--gold-glow:      rgba(245,158,11,0.25)
+--text-primary:   #f5f5f5
+--text-secondary: #909090
+--text-muted:     #555555
+--success:        #22c55e
+--warning:        #f59e0b
+--error:          #ef4444
+
+Typography:
+- Display: Clash Display 48–72px weight 600
+- H1: Clash Display 36px weight 600
+- H2: Clash Display 28px weight 600
+- H3: DM Sans 20px weight 600
+- Body: DM Sans 14px weight 400 line-height 1.6
+- Label: DM Sans 12px weight 500 uppercase tracking-wider
+
+Component Rules:
+- Transitions: 150ms ease on all interactive elements
+- Hover: brightness(1.08) or scale(1.01)
+- Active: scale(0.98)
+- Focus: 2px solid accent, offset 2px
+- Disabled: opacity 0.4 cursor-not-allowed
+- Modals: backdrop-blur(12px) dark overlay
+- Tooltips: 200ms delay, dark bg, DM Sans 12px
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 3. ROUTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/             → Landing Page
+/editor       → Editor
+/preview/:id  → Shareable preview
+/404          → Not Found
+
+Page transitions: Framer Motion fade + y: 12→0
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 4. LANDING PAGE (/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Navbar:
+- Fixed top, backdrop-blur(16px), rgba(8,8,8,0.85)
+- Logo: "3DLogoLab" Clash Display + rotating 3D cube icon
+- Links: Features · Materials · Pricing · Blog
+- Right: "Sign in" (ghost) + "Start Free →" (accent)
+- Mobile: hamburger → fullscreen overlay
+
+Hero:
+- 100vh, animated gradient mesh bg (slow purple/blue, 10s loop)
+- Center: live WebGL canvas, rotating "3D" text, Solar Gold material
+- Headline: "Your Logo. In 3D. In Seconds." — 72px Clash Display
+- Sub: "Upload any image and watch it transform into a beautiful
+  interactive 3D model. Export as GIF, video, or 3D file."
+- CTAs: "Try for Free →" (accent glow) + "See Examples ↓" (ghost)
+- Social proof: ★★★★★ "400,000+ creators" | "No signup" | "100% browser"
+- Drag-and-drop zone: "Drop your logo here to start instantly"
+  On drop → navigate /editor with file preloaded
+
+Features (6 cards, 2×3):
+1. ⚡ Instant Conversion — Runs in your browser, no waiting
+2. 🎨 Real Image Colors — Exact pixel colors applied to 3D
+3. 🪞 Premium Materials — Chrome, Gold, Gradients, Custom
+4. 🎬 All Export Formats — GIF, MP4, PNG, GLB, STL and more
+5. 🔒 100% Private — Files never leave your device
+6. 📱 Works Everywhere — Any modern browser, any device
+
+Materials Showcase:
+4 cards each with live rotating 3D sphere:
+Forged Chrome · Solar Gold · Cosmic Gradient · Galactic Patterns
+
+Before/After:
+Draggable divider — LEFT: flat 2D logo | RIGHT: 3D rotating version
+
+How It Works (3 steps):
+1. Upload logo (PNG, SVG, JPG, WebP)
+2. Customize materials, animations, colors
+3. Export any format
+
+Pricing:
+Monthly/Annual toggle (annual = Save 40%)
+
+FREE:
+✓ Unlimited 3D generations | ✓ All materials
+✓ Original image colors | ✓ PNG JPG WebP export
+✓ OBJ + STL export | ✗ Watermark | ✗ Video/GIF | ✗ GLB
+
+PRO ($12.49/mo or $98/yr):
+✓ Everything in Free | ✓ GIF WebM MP4 export
+✓ GLB export | ✓ No watermark | ✓ Commercial use
+✓ High quality mode | ✓ Priority support
+Badge: "MOST POPULAR"
+
+Testimonials (3 cards) + FAQ (5 items accordion) + Footer (4 cols)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 5. EDITOR (/editor)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Layout: LEFT(280px) | CENTER(flex-1) | RIGHT(300px) — 100vh no scroll
+
+Editor Navbar (48px):
+- Left: ← Back | project name (editable inline)
+- Center: Undo(⌘Z) Redo(⌘⇧Z) | Reset All
+- Right: Share | Save | Avatar
+
+Keyboard shortcuts:
+⌘Z=Undo | ⌘⇧Z=Redo | R=Reset cam | F=Fullscreen
+Space=Play/pause | W=Wireframe | G=Grid | H=Hide sidebar
+1/2/3=Camera views | ⌘S=Save | ⌘E=Export | ?=Shortcuts modal
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 6. LEFT SIDEBAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Scrollable, 280px, collapsible to 48px icon strip.
+Accordion sections with smooth height animation.
+
+── SECTION 0: 3D MODE SELECTOR (topmost, always visible) ──
+
+3 full-width selectable cards:
+
+[🖼 Textured Extrusion] ← DEFAULT
+Front face = original image texture exactly.
+Sides = selected material. Looks like enamel pin.
+
+[🎨 Layered Colors]
+One extruded layer per color region.
+Stacked at different Z depths. Looks like trophy badge.
+
+[🗿 Relief Sculpt]
+Single mesh. Vertex Z from pixel brightness.
+Bright=raised, dark=grooved. Looks like coin/medal.
+
+Layer Count (Layered mode only): slider 3–10 (default 6)
+
+── SECTION 1: UPLOAD ──
+
+Drag & drop zone (160px, animated dashes):
+- Accepted: PNG, JPG, JPEG, SVG, WEBP (max 20MB)
+- After upload: 64px thumbnail + filename + dimensions
+- "Replace" + "Remove" buttons
+- 8 extracted dominant color swatches shown below
+- Tip: "PNG with transparent background gives best results"
+
+Error states (all must be handled):
+- File too large: shake animation + red border + toast
+- Unsupported format: toast listing accepted formats
+- Corrupt file: "Could not read file" + retry button
+- JPG no transparency: yellow warning toast, proceed anyway
+- Zero visible pixels: "No visible content found in image"
+- Mask all foreground: "Could not detect background — try PNG"
+- Mask inverted: auto-corrected silently, log to console
+
+── SECTION 2: SHAPE ──
+
+Thickness: slider 1–100 (default 20) → ExtrudeGeometry depth/40
+Bevel: toggle (default on)
+  When on:
+  - Bevel Size: 0–20 (default 4)
+  - Bevel Segments: 1–10 (default 4)
+Smooth Normals: toggle (default on) → computeVertexNormals()
+Sides: "Front & Back" / "Front Only"
+Center Origin: toggle (default on) → geometry.center()
+Scale: slider 0.5×–3.0× (default 1.0)
+
+── SECTION 3: COLOR SOURCE ──
+
+Two large toggle pills:
+[🎨 Original Image Colors]   [🪞 Material System]
+
+Original Image Colors:
+- Shows 8 dominant color swatches (hex on hover)
+- Toggle: "Apply to full mesh" / "Front face only"
+- Reflection + Shine still adjustable from Custom tab
+- Label: "Colors extracted from your image"
+
+Material System:
+- Shows material tabs below
+- Color Mix slider (only when Textured mode active):
+  Original ←──●──────────→ Material (0–100%)
+
+── SECTION 4: MATERIAL ──
+
+3 tabs: [Preset] [Custom] [Advanced]
+
+TAB A — PRESET (2×2 grid, each card has live 80px sphere):
+
+1. FORGED CHROME
+   color:#C0C0C0 metalness:1.0 roughness:0.05 envMapIntensity:2.5
+   Procedural brushed normalMap
+
+2. SOLAR GOLD
+   color:#FFD000 metalness:1.0 roughness:0.08 envMapIntensity:2.0
+   Warm point light (0xFFA500, intensity 1.2) top-right
+
+3. COSMIC GRADIENT
+   Canvas gradient: #6600ff→#00c3ff→#00ffe7 (diagonal)
+   metalness:0.3 roughness:0.2
+
+4. GALACTIC PATTERNS
+   simplex-noise star/nebula canvas texture
+   metalness:0.5 roughness:0.3
+   texture.offset.x += 0.0005 per frame (slow drift)
+
+TAB B — CUSTOM:
+Color — react-colorful + hex input + live swatch
+Reflection — 0–100 → metalness 0.0–1.0
+Shine — 0–100 → roughness 1.0–0.0 (inverted)
+Surface Texture dropdown:
+  None / Brushed Metal / Hammered / Wood Grain / Carbon Fiber / Leather
+  (all procedural canvas 512×512)
+Texture Strength — 0–100 → normalScale 0.0–3.0
+Texture Size — 1–10 → texture.repeat.set(n,n)
+"Preview on sphere" toggle (80px live sphere)
+
+TAB C — ADVANCED:
+3 upload slots (drag & drop, thumbnail, remove button):
+  Diffuse Map   → material.map
+  Roughness Map → material.roughnessMap
+  Normal Map    → material.normalMap
+Badge on canvas when active: "Custom maps active"
+
+── SECTION 5: ANIMATION ──
+
+Type:
+None / Rotate Y / Bounce / Spin+Tilt / Pendulum /
+Float / Pulse / Wobble / Orbit / Heartbeat
+
+useFrame implementations:
+- Rotate Y:   mesh.rotation.y += 0.01 * speed
+- Bounce:     mesh.position.y = sin(t*2) * 0.3
+- Spin+Tilt:  rotation.y += 0.01*s; rotation.x = sin(t)*0.3
+- Pendulum:   rotation.z = sin(t*1.5) * 0.4
+- Float:      position.y = sin(t)*0.15; rotation.y += 0.005*s
+- Pulse:      mesh.scale.setScalar(1 + sin(t*3)*0.05)
+- Wobble:     rotation.x = sin(t*2)*0.1; rotation.z = cos(t*1.5)*0.1
+- Orbit:      position.x = sin(t)*0.5; position.z = cos(t)*0.5
+- Heartbeat:  two quick pulses then pause, 1.5s loop
+
+Speed: 0.1×–3.0× | Auto-play toggle | Loop toggle
+
+── SECTION 6: SCENE ──
+
+Background: color picker + transparency toggle
+Environment: Studio/Sunset/Forest/Night City/Abstract/None
+  + Intensity 0.0–2.0
+Ambient: intensity 0–2 + color
+Directional: intensity 0–2 + color + X/Y/Z position
+Point light: toggle + position + color + intensity
+Shadow: toggle + type (Basic/PCF/PCFSoft)
+Fog: toggle + color + density
+Grid: toggle + size + color
+Wireframe: toggle
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 7. CENTER CANVAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Full-height, full-width remaining space.
+
+Top Toolbar (40px):
+Left: [Perspective▾] | [−][🏠][+] | [⊞ Reset]
+Right: [Wireframe][Grid][Lights][Fullscreen][FPS:60]
+
+Canvas setup (CRITICAL settings):
+<Canvas
+  gl={{
+    preserveDrawingBuffer: true,
+    antialias: true,
+    alpha: true,
+    powerPreference: 'high-performance',
+    outputColorSpace: THREE.SRGBColorSpace,
+    toneMapping: THREE.ACESFilmicToneMapping,
+    toneMappingExposure: 1.2,
+  }}
+>
+
+OrbitControls:
+  enableDamping: true
+  dampingFactor: 0.05
+  Left drag = rotate | Right drag = pan | Scroll = zoom
+  Double-click = reset camera (animated 600ms)
+  Touch: pinch=zoom, one-finger=rotate, two-finger=pan
+
+Canvas Overlays:
+- Top-left: material name badge
+- Top-right: FPS counter (toggleable)
+- Bottom-center: "Drag to rotate · Scroll to zoom · Right-drag to pan"
+  Fades after 4s, reappears on hover
+- Bottom-right: [2D][3D] comparison toggle
+
+Placeholder (no upload):
+Large "3D" ExtrudeGeometry text, Cosmic Gradient, slow rotation
+Dashed zone below: "Drop your logo here to see it in 3D"
+
+Loading Overlay (centered, semi-transparent):
+Spinner + sequential steps:
+  ⏳ Reading image pixels...
+  ⏳ Detecting background...
+  ⏳ Building alpha mask...
+  ⏳ Tracing shape outline...
+  ⏳ Building 3D geometry...
+  ⏳ Applying material + texture...
+  ✓ Done!
+(Each step updates as processing progresses)
+
+Error Overlay:
+Red canvas border + centered card:
+  ⚠ Title (specific error)
+  Message (actionable advice)
+  [Try Again] [Upload Different Image]
+
+Right-click Context Menu:
+📷 Screenshot | 🔄 Reset Camera | 📐 View submenu
+── | 📏 Wireframe | ⊡ Grid
+── | 📤 Export... | 🔗 Copy Share Link
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 8. RIGHT PANEL — EXPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+300px fixed, collapsible to 48px.
+
+EXPORT PREVIEW:
+Separate live Three.js canvas (NOT screenshot).
+260px wide, same mesh, slow auto-rotation.
+White overlay frame = exact crop.
+Below: "1080×1080 px · PNG · ~2.4MB" (updates live)
+
+SIZE:
+[Auto][Portrait][Square][Landscape][Custom]
+Auto:      canvas ratio
+Portrait:  1080×1350 (4:5)
+Square:    1080×1080 (1:1)
+Landscape: 1920×1080 (16:9)
+Custom:    W[____]×H[____] + 🔒 aspect lock
+
+QUALITY:
+[Fast][Balanced✓][High⚠]
+Fast:     pixelRatio 1×, GIF q20, bitrate 2Mbps
+Balanced: pixelRatio 1.5×, GIF q10, bitrate 5Mbps
+High:     pixelRatio 2×, GIF q3, bitrate 12Mbps
+          ⚠ "Recommended for powerful devices"
+
+DURATION (animated exports only):
+Slider 1s–10s (default 3s)
+FPS: [24][30][60]
+
+FORMAT BUTTONS:
+
+🎬 ANIMATED
+[GIF] [WebM] [MP4]
+GIF:  "Emails, messaging, everywhere"
+WebM: "Smallest file, modern browsers"
+MP4:  "Social media, universal"
+
+🖼️ IMAGE
+[PNG] [JPG] [WebP]
+PNG:  "Lossless, transparent bg"
+JPG:  "Solid bg, smaller size"
+WebP: "Modern, best compression"
+
+📦 3D MODEL
+[GLB] [OBJ] [STL]
+GLB:  "Blender, games, AR/VR"
+OBJ:  "Universal 3D format"
+STL:  "3D printing ready"
+
+🔗 SHARE
+[Copy Embed Code] [Copy Share Link] [Download All ZIP]
+
+PROGRESS BAR (during export):
+████████░░░░  72%
+"Rendering frame 43 of 60..."
+[Cancel]
+✓ "Download started!" (green, fades 2s)
+
+WATERMARK NOTICE (Free):
+"Exports include a watermark"
+[Upgrade to Pro →]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 9. COMPLETE IMAGE PROCESSING PIPELINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Implement ALL functions below exactly as written.
+```typescript
+// ━━━ STEP 1: SMART ALPHA MASK BUILDER (fixes BUG 1, 4, 6) ━━━
+
+function buildAlphaMask(imageData: ImageData): Uint8Array {
+  const { data, width, height } = imageData
+  const total = width * height
+  const mask = new Uint8Array(total)
+
+  // Check for real transparency (>1% truly transparent pixels)
+  let transparentCount = 0
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] < 128) transparentCount++
+  }
+  const hasRealAlpha = transparentCount > total * 0.01
+
+  if (hasRealAlpha) {
+    // Proper transparent PNG → use alpha directly
+    for (let i = 0; i < data.length; i += 4) {
+      mask[i / 4] = data[i + 3] > 128 ? 1 : 0
+    }
+    return autoCorrectInversion(mask, total)
+  }
+
+  // No real alpha (JPG or solid-bg PNG) → detect bg from corners
+  const samplePoints = [
+    0, width-1,
+    (height-1)*width, (height-1)*width+(width-1),
+    Math.floor(width/2),
+    (height-1)*width+Math.floor(width/2),
+    Math.floor(height/2)*width,
+    Math.floor(height/2)*width+(width-1),
+  ]
+
+  let bgR=0, bgG=0, bgB=0
+  samplePoints.forEach(idx => {
+    bgR += data[idx*4]; bgG += data[idx*4+1]; bgB += data[idx*4+2]
+  })
+  bgR /= samplePoints.length
+  bgG /= samplePoints.length
+  bgB /= samplePoints.length
+
+  // Initial mask by Euclidean color distance from bg
+  const threshold = 40
+  for (let i = 0; i < data.length; i += 4) {
+    const dr=data[i]-bgR, dg=data[i+1]-bgG, db=data[i+2]-bgB
+    mask[i/4] = Math.sqrt(dr*dr+dg*dg+db*db) > threshold ? 1 : 0
+  }
+
+  // Flood fill from border — TIGHT tolerance to prevent outline leakage
+  const floodThreshold = threshold * 0.8
+  const visited = new Uint8Array(total)
+  const queue: number[] = []
+
+  for (let x=0; x<width; x++) {
+    if (mask[x]===0) queue.push(x)
+    if (mask[(height-1)*width+x]===0) queue.push((height-1)*width+x)
+  }
+  for (let y=0; y<height; y++) {
+    if (mask[y*width]===0) queue.push(y*width)
+    if (mask[y*width+width-1]===0) queue.push(y*width+width-1)
+  }
+
+  let qi=0
+  while (qi<queue.length) {
+    const idx=queue[qi++]
+    if (visited[idx]) continue
+    visited[idx]=1; mask[idx]=0
+    const x=idx%width, y=Math.floor(idx/width)
+    const neighbors=[
+      y>0?idx-width:-1, y<height-1?idx+width:-1,
+      x>0?idx-1:-1,     x<width-1?idx+1:-1,
+    ]
+    for (const n of neighbors) {
+      if (n<0||visited[n]) continue
+      const dr=data[n*4]-bgR, dg=data[n*4+1]-bgG, db=data[n*4+2]-bgB
+      if (Math.sqrt(dr*dr+dg*dg+db*db) < floodThreshold) queue.push(n)
+    }
+  }
+
+  const cleaned = morphClean(mask, width, height)
+  return autoCorrectInversion(cleaned, total)
+}
+
+// ━━━ CRITICAL FIX: Auto-detect and flip inverted masks (fixes BUG 1) ━━━
+function autoCorrectInversion(mask: Uint8Array, total: number): Uint8Array {
+  let fg=0
+  for (let i=0; i<total; i++) if (mask[i]===1) fg++
+  const ratio = fg/total
+
+  if (ratio > 0.55) {
+    // >55% foreground = almost certainly inverted → flip
+    const flipped = new Uint8Array(total)
+    for (let i=0; i<total; i++) flipped[i] = mask[i]===1?0:1
+    console.log(`[Mask] Inverted (${Math.round(ratio*100)}%) → auto-flipped`)
+    return flipped
+  }
+  console.log(`[Mask] OK — ${Math.round(ratio*100)}% foreground`)
+  return mask
+}
+
+// Morphological cleanup — remove noise, fill holes
+function morphClean(mask: Uint8Array, w: number, h: number): Uint8Array {
+  const cleaned = new Uint8Array(mask)
+  // Erosion: remove isolated pixels
+  for (let y=1; y<h-1; y++) for (let x=1; x<w-1; x++) {
+    const idx=y*w+x
+    if (mask[idx]===0) continue
+    const fg = mask[idx-w]+mask[idx+w]+mask[idx-1]+mask[idx+1]+
+               mask[idx-w-1]+mask[idx-w+1]+mask[idx+w-1]+mask[idx+w+1]
+    if (fg<2) cleaned[idx]=0
+  }
+  // Dilation: fill interior holes
+  const dilated = new Uint8Array(cleaned)
+  for (let y=1; y<h-1; y++) for (let x=1; x<w-1; x++) {
+    const idx=y*w+x
+    if (cleaned[idx]===1) continue
+    const fg = cleaned[idx-w]+cleaned[idx+w]+cleaned[idx-1]+cleaned[idx+1]+
+               cleaned[idx-w-1]+cleaned[idx-w+1]+cleaned[idx+w-1]+cleaned[idx+w+1]
+    if (fg>=6) dilated[idx]=1
+  }
+  return dilated
+}
+
+// ━━━ STEP 2: CONTOUR SMOOTHING (fixes BUG 5) ━━━
+function smoothContour(pts: {x:number,y:number}[], iter=3) {
+  for (let i=0; i<iter; i++) {
+    pts = pts.map((_,j,a)=>({
+      x:(a[(j-1+a.length)%a.length].x+a[j].x*2+a[(j+1)%a.length].x)/4,
+      y:(a[(j-1+a.length)%a.length].y+a[j].y*2+a[(j+1)%a.length].y)/4,
+    }))
+  }
+  return pts
+}
+
+function simplifyContour(pts: {x:number,y:number}[], tol=1.5) {
+  if (pts.length<3) return pts
+  function perp(p:any,a:any,b:any) {
+    const dx=b.x-a.x,dy=b.y-a.y,len=Math.sqrt(dx*dx+dy*dy)
+    return len===0?Math.hypot(p.x-a.x,p.y-a.y):Math.abs(dx*(a.y-p.y)-(a.x-p.x)*dy)/len
+  }
+  function rdp(p:any[],e:number):any[] {
+    if(p.length<=2) return p
+    let maxD=0,maxI=0
+    for(let i=1;i<p.length-1;i++){const d=perp(p[i],p[0],p[p.length-1]);if(d>maxD){maxD=d;maxI=i}}
+    return maxD>e?[...rdp(p.slice(0,maxI+1),e).slice(0,-1),...rdp(p.slice(maxI),e)]:[p[0],p[p.length-1]]
+  }
+  return rdp(pts,tol)
+}
+
+function processContour(raw: {x:number,y:number}[]) {
+  return simplifyContour(smoothContour(raw,3),1.5)
+}
+
+// ━━━ STEP 3: IMAGE → THREE.Shape[] ━━━
+async function imageToOutlineShapes(file: File): Promise<THREE.Shape[]> {
+  const url = URL.createObjectURL(file)
+  const img = await new Promise<HTMLImageElement>((res,rej)=>{
+    const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url
+  })
+
+  const maxDim=512
+  const scale=Math.min(maxDim/img.width,maxDim/img.height,1)
+  const w=Math.floor(img.width*scale), h=Math.floor(img.height*scale)
+
+  const canvas=document.createElement('canvas')
+  canvas.width=w; canvas.height=h
+  const ctx=canvas.getContext('2d',{willReadFrequently:true})!
+  ctx.drawImage(img,0,0,w,h)
+  URL.revokeObjectURL(url)
+
+  const imageData=ctx.getImageData(0,0,w,h)
+  const mask=buildAlphaMask(imageData)
+
+  const fgCount=mask.reduce((s,v)=>s+v,0)
+  console.log(`[Mask] ${fgCount}/${w*h} px foreground (${Math.round(fgCount/(w*h)*100)}%)`)
+
+  const contours=marchingSquares(mask,w,h)
+  if(contours.length===0) throw new Error('No shape found. Try PNG with transparent background.')
+
+  const processed=contours.map(processContour).filter(c=>c.length>=3)
+
+  const shapes=processed.map(pts=>{
+    const s=new THREE.Shape()
+    pts.forEach((pt,i)=>{
+      const x=pt.x/w-0.5, y=-(pt.y/h-0.5)
+      i===0?s.moveTo(x,y):s.lineTo(x,y)
+    })
+    s.closePath()
+    return s
+  })
+
+  // Sort by area, keep significant shapes only
+  const withArea=shapes.map(s=>{
+    const pts=s.getPoints(20); let area=0
+    for(let i=0;i<pts.length;i++){
+      const j=(i+1)%pts.length
+      area+=pts[i].x*pts[j].y-pts[j].x*pts[i].y
+    }
+    return {s,area:Math.abs(area)/2}
+  }).sort((a,b)=>b.area-a.area)
+
+  const maxArea=withArea[0]?.area??0
+  const significant=withArea.filter(x=>x.area>maxArea*0.01).map(x=>x.s)
+  console.log(`[Shapes] ${significant.length} significant shapes`)
+  return significant
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 10. THREE 3D MESH STRATEGIES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```typescript
+// ━━━ STRATEGY 1: TEXTURED EXTRUSION (Default) — fixes BUG 2, 3 ━━━
+// Front face = original image texture. Sides = material preset.
+// Looks like enamel pin / acrylic badge.
+
+async function buildTexturedMesh(file: File, opts: ShapeOptions): Promise<THREE.Mesh> {
+  const shapes = await imageToOutlineShapes(file)
+  if (!shapes.length) throw new Error('No shape extracted')
+
+  const geometry = new THREE.ExtrudeGeometry(shapes, {
+    depth: opts.thickness/40,
+    bevelEnabled: opts.bevel??true,
+    bevelThickness: 0.008,
+    bevelSize: 0.006,
+    bevelSegments: 3,
+    curveSegments: 16,
+  })
+
+  // CRITICAL ORDER: center FIRST, then remap UVs
+  geometry.center()
+  geometry.computeVertexNormals()
+  remapFrontFaceUVs(geometry)  // must be AFTER center()
+
+  // Load texture fully before creating material
+  const tex = await new Promise<THREE.Texture>((res,rej)=>{
+    const u=URL.createObjectURL(file)
+    new THREE.TextureLoader().load(u, t=>{
+      URL.revokeObjectURL(u)
+      t.flipY=false                      // CRITICAL for ExtrudeGeometry
+      t.colorSpace=THREE.SRGBColorSpace  // CRITICAL for correct colors
+      t.needsUpdate=true
+      res(t)
+    }, undefined, rej)
+  })
+
+  const frontMat = new THREE.MeshStandardMaterial({
+    map: tex,
+    metalness: 0.05,
+    roughness: 0.5,
+    side: THREE.FrontSide,
+    transparent: true,
+  })
+  frontMat.needsUpdate=true
+
+  // Color mix: blend texture vs material color (0=full texture, 100=full material)
+  if (opts.colorMix>0 && opts.colorSource==='material') {
+    const blend=new THREE.Color().lerpColors(
+      new THREE.Color(0xffffff),
+      new THREE.Color(opts.material.color??0xffd700),
+      opts.colorMix/100
+    )
+    frontMat.color=blend
+    if (opts.colorMix>=100) frontMat.map=null
+  }
+
+  const sideMat=buildSelectedMaterial(opts)
+  const mesh=new THREE.Mesh(geometry,[frontMat,sideMat])
+  mesh.castShadow=true
+  mesh.receiveShadow=true
+  return mesh
+}
+
+function remapFrontFaceUVs(geo: THREE.ExtrudeGeometry) {
+  if (!geo.groups||geo.groups.length<2) {
+    console.warn('[UV] No groups found'); return
+  }
+  const uv=geo.attributes.uv as THREE.BufferAttribute
+  const g=geo.groups[0]  // front face
+  let minU=Infinity,maxU=-Infinity,minV=Infinity,maxV=-Infinity
+
+  for (let i=g.start; i<g.start+g.count; i++) {
+    const u=uv.getX(i),v=uv.getY(i)
+    if(u<minU)minU=u; if(u>maxU)maxU=u
+    if(v<minV)minV=v; if(v>maxV)maxV=v
+  }
+
+  const rU=maxU-minU, rV=maxV-minV
+  if(rU<0.0001||rV<0.0001){console.warn('[UV] Degenerate range');return}
+
+  for (let i=g.start; i<g.start+g.count; i++) {
+    uv.setXY(i,(uv.getX(i)-minU)/rU,(uv.getY(i)-minV)/rV)
+  }
+  uv.needsUpdate=true
+  console.log(`[UV] Remapped: U[${minU.toFixed(3)}–${maxU.toFixed(3)}] V[${minV.toFixed(3)}–${maxV.toFixed(3)}]`)
+}
+
+// ━━━ STRATEGY 2: LAYERED COLORS ━━━
+// K-means segments image into N color layers.
+// Each layer extruded at increasing Z. Dark→back, light→front.
+
+async function buildMultiLayerMesh(file: File, opts: ShapeOptions): Promise<THREE.Group> {
+  const url=URL.createObjectURL(file)
+  const img=await new Promise<HTMLImageElement>((res,rej)=>{
+    const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url
+  })
+  URL.revokeObjectURL(url)
+
+  const maxDim=512
+  const scale=Math.min(maxDim/img.width,maxDim/img.height,1)
+  const w=Math.floor(img.width*scale), h=Math.floor(img.height*scale)
+  const canvas=document.createElement('canvas')
+  canvas.width=w; canvas.height=h
+  const ctx=canvas.getContext('2d',{willReadFrequently:true})!
+  ctx.drawImage(img,0,0,w,h)
+  const imageData=ctx.getImageData(0,0,w,h)
+
+  const clusters=kMeansCluster(imageData, opts.layerCount??6)
+  clusters.sort((a,b)=>getLuminance(a.color)-getLuminance(b.color))
+
+  const group=new THREE.Group()
+  const totalDepth=opts.thickness/40
+  let zAcc=0
+
+  for (const cluster of clusters) {
+    const contours=marchingSquares(cluster.mask,w,h)
+    if(!contours.length) continue
+    const shapes=contours.map(processContour).filter(c=>c.length>=3).map(pts=>{
+      const s=new THREE.Shape()
+      pts.forEach((pt,i)=>{
+        const x=pt.x/w-0.5, y=-(pt.y/h-0.5)
+        i===0?s.moveTo(x,y):s.lineTo(x,y)
+      })
+      s.closePath(); return s
+    })
+
+    const layerDepth=totalDepth/clusters.length
+    const geo=new THREE.ExtrudeGeometry(shapes,{
+      depth:layerDepth, bevelEnabled:false, curveSegments:12
+    })
+
+    const mat=new THREE.MeshStandardMaterial({
+      color: new THREE.Color(cluster.color),
+      metalness: opts.colorSource==='material'?(opts.material.metalness??0.3):0.2,
+      roughness: opts.colorSource==='material'?(opts.material.roughness??0.4):0.5,
+      side: THREE.DoubleSide,
+    })
+
+    const mesh=new THREE.Mesh(geo,mat)
+    mesh.position.z=zAcc-totalDepth/2
+    mesh.castShadow=true; mesh.receiveShadow=true
+    group.add(mesh)
+    zAcc+=layerDepth*0.8
+  }
+
+  const box=new THREE.Box3().setFromObject(group)
+  group.position.sub(box.getCenter(new THREE.Vector3()))
+  return group
+}
+
+function kMeansCluster(imageData: ImageData, k: number) {
+  const {data,width,height}=imageData
+  const total=width*height
+  const valid:[number,number,number][]=[]
+  for(let i=0;i<data.length;i+=4) if(data[i+3]>128) valid.push([data[i],data[i+1],data[i+2]])
+  if(!valid.length) return []
+
+  let centers:[number,number,number][]=Array.from({length:k},()=>{
+    const idx=Math.floor(Math.random()*valid.length)
+    return [...valid[idx]] as [number,number,number]
+  })
+  const assignments=new Int32Array(total).fill(-1)
+
+  for(let iter=0;iter<10;iter++){
+    for(let i=0;i<data.length;i+=4){
+      const pi=i/4
+      if(data[i+3]<128){assignments[pi]=-1;continue}
+      let minD=Infinity,best=0
+      centers.forEach(([cr,cg,cb],ci)=>{
+        const d=(data[i]-cr)**2+(data[i+1]-cg)**2+(data[i+2]-cb)**2
+        if(d<minD){minD=d;best=ci}
+      })
+      assignments[pi]=best
+    }
+    const sums=centers.map(()=>[0,0,0,0] as [number,number,number,number])
+    for(let i=0;i<data.length;i+=4){
+      const ci=assignments[i/4]; if(ci<0) continue
+      sums[ci][0]+=data[i];sums[ci][1]+=data[i+1];sums[ci][2]+=data[i+2];sums[ci][3]++
+    }
+    centers=sums.map(([r,g,b,n])=>n>0?[r/n,g/n,b/n] as [number,number,number]:[128,128,128])
+  }
+
+  return centers.map((c,ci)=>{
+    const mask=new Uint8Array(total); let count=0
+    for(let i=0;i<total;i++) if(assignments[i]===ci){mask[i]=1;count++}
+    const [r,g,b]=c.map(Math.round)
+    return {color:`#${[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('')}`,mask,pixelCount:count}
+  }).filter(c=>c.pixelCount>100)
+}
+
+function getLuminance(hex:string){
+  const r=parseInt(hex.slice(1,3),16)/255
+  const g=parseInt(hex.slice(3,5),16)/255
+  const b=parseInt(hex.slice(5,7),16)/255
+  return 0.2126*r+0.7152*g+0.0722*b
+}
+
+// ━━━ STRATEGY 3: RELIEF SCULPT ━━━
+// Vertex Z displacement from pixel luminance. Like a coin.
+
+async function buildHeightMapMesh(file: File, opts: ShapeOptions): Promise<THREE.Mesh> {
+  const res=200
+  const geo=new THREE.PlaneGeometry(1,1,res,res)
+  const canvas=document.createElement('canvas')
+  canvas.width=canvas.height=res
+  const ctx=canvas.getContext('2d')!
+  const url=URL.createObjectURL(file)
+  const img=await new Promise<HTMLImageElement>((resolve,reject)=>{
+    const i=new Image(); i.onload=()=>resolve(i); i.onerror=reject; i.src=url
+  })
+  ctx.drawImage(img,0,0,res,res)
+  URL.revokeObjectURL(url)
+  const {data}=ctx.getImageData(0,0,res,res)
+  const pos=geo.attributes.position
+  const maxD=opts.thickness/40
+
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), y=pos.getY(i)
+    const px=Math.max(0,Math.min(res-1,Math.floor((x+0.5)*res)))
+    const py=Math.max(0,Math.min(res-1,Math.floor((0.5-y)*res)))
+    const idx=(py*res+px)*4
+    const lum=(0.2126*data[idx]+0.7152*data[idx+1]+0.0722*data[idx+2])/255
+    const a=data[idx+3]
+    pos.setZ(i, a<128?-maxD*0.5:lum<0.15?0:maxD*lum)
+  }
+  pos.needsUpdate=true
+  geo.computeVertexNormals()
+
+  const tex=await new Promise<THREE.Texture>((res2,rej)=>{
+    const u=URL.createObjectURL(file)
+    new THREE.TextureLoader().load(u,t=>{URL.revokeObjectURL(u);t.colorSpace=THREE.SRGBColorSpace;res2(t)},undefined,rej)
+  })
+
+  const mat=new THREE.MeshStandardMaterial({
+    map: opts.colorSource==='image'?tex:null,
+    metalness: opts.material.metalness??0.4,
+    roughness: opts.material.roughness??0.3,
+    side: THREE.DoubleSide,
+  })
+  if(opts.colorSource==='material') applyPresetToMaterial(mat,opts.material)
+
+  const mesh=new THREE.Mesh(geo,mat)
+  mesh.castShadow=true; mesh.receiveShadow=true
+  return mesh
+}
+
+// ━━━ MAIN DISPATCHER ━━━
+async function buildMesh(file: File, opts: ShapeOptions): Promise<THREE.Object3D> {
+  switch(opts.threeDMode){
+    case 'textured': return buildTexturedMesh(file,opts)
+    case 'layered':  return buildMultiLayerMesh(file,opts)
+    case 'relief':   return buildHeightMapMesh(file,opts)
+    default:         return buildTexturedMesh(file,opts)
+  }
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 11. COLOR EXTRACTION & VERTEX COLORS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```typescript
+async function extractColors(file: File) {
+  const url=URL.createObjectURL(file)
+  const img=await new Promise<HTMLImageElement>((res,rej)=>{
+    const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url
+  })
+  const canvas=document.createElement('canvas')
+  canvas.width=img.width; canvas.height=img.height
+  const ctx=canvas.getContext('2d')!
+  ctx.drawImage(img,0,0)
+  URL.revokeObjectURL(url)
+  const iData=ctx.getImageData(0,0,canvas.width,canvas.height)
+  const {data,width,height}=iData
+  const map=new Map<string,number>()
+
+  for(let i=0;i<data.length;i+=4){
+    if(data[i+3]<128) continue
+    const r=Math.round(data[i]/16)*16
+    const g=Math.round(data[i+1]/16)*16
+    const b=Math.round(data[i+2]/16)*16
+    const hex=`#${[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('')}`
+    map.set(hex,(map.get(hex)||0)+1)
+  }
+
+  const dominant=[...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8).map(([h])=>h)
+  return {dominant,imageData:iData,width,height}
+}
+
+function applyImageColorsToMesh(mesh: THREE.Mesh, imageData: ImageData) {
+  const geo=mesh.geometry
+  const pos=geo.attributes.position
+  const colors=new Float32Array(pos.count*3)
+
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), y=pos.getY(i)
+    const px=Math.max(0,Math.min(imageData.width-1,Math.floor((x+0.5)*imageData.width)))
+    const py=Math.max(0,Math.min(imageData.height-1,Math.floor((0.5-y)*imageData.height)))
+    const idx=(py*imageData.width+px)*4
+    colors[i*3]=imageData.data[idx]/255
+    colors[i*3+1]=imageData.data[idx+1]/255
+    colors[i*3+2]=imageData.data[idx+2]/255
+  }
+
+  geo.setAttribute('color',new THREE.BufferAttribute(colors,3))
+  const mat=mesh.material as THREE.MeshStandardMaterial
+  mat.vertexColors=true; mat.needsUpdate=true
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 12. PROCEDURAL TEXTURES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```typescript
+function generateTexture(type: SurfaceTexture, repeat: number): THREE.CanvasTexture {
+  const c=document.createElement('canvas'); c.width=c.height=512
+  const ctx=c.getContext('2d')!
+
+  switch(type){
+    case 'brushed':
+      for(let y=0;y<512;y+=2){
+        const v=120+Math.random()*30
+        ctx.strokeStyle=`rgb(${v},${v},${v})`
+        ctx.lineWidth=1+Math.random()
+        ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(512,y);ctx.stroke()
+      }
+      break
+    case 'hammered':
+      ctx.fillStyle='#888';ctx.fillRect(0,0,512,512)
+      for(let i=0;i<200;i++){
+        const x=Math.random()*512,y=Math.random()*512,r=4+Math.random()*12
+        const g=ctx.createRadialGradient(x,y,0,x,y,r)
+        g.addColorStop(0,'rgba(255,255,255,0.4)')
+        g.addColorStop(0.5,'rgba(100,100,100,0.2)')
+        g.addColorStop(1,'rgba(0,0,0,0.3)')
+        ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill()
+      }
+      break
+    case 'carbon':
+      for(let y=0;y<512;y+=4) for(let x=0;x<512;x+=4){
+        const shift=(Math.floor(y/4)%2)*2
+        ctx.fillStyle=(Math.floor((x+shift)/2)%2===0)?'#1a1a1a':'#2d2d2d'
+        ctx.fillRect(x,y,4,4)
+      }
+      break
+    case 'wood':
+      for(let y=0;y<512;y++){
+        const v=140+Math.sin(y*0.2)*30+Math.sin(y*0.05)*20
+        ctx.fillStyle=`rgb(${Math.floor(v*0.7)},${Math.floor(v*0.5)},${Math.floor(v*0.2)})`
+        ctx.fillRect(0,y,512,1)
+      }
+      break
+    case 'leather':
+      for(let y=0;y<512;y+=2) for(let x=0;x<512;x+=2){
+        const n=simplexNoise2D(x*0.02,y*0.02)
+        const v=Math.floor(80+n*40)
+        ctx.fillStyle=`rgb(${v},${Math.floor(v*0.7)},${Math.floor(v*0.5)})`
+        ctx.fillRect(x,y,2,2)
+      }
+      break
+  }
+
+  const tex=new THREE.CanvasTexture(c)
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping
+  tex.repeat.set(repeat,repeat)
+  return tex
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 13. LIGHTING SETUP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```typescript
+function setupLighting(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
+  // Key: main illumination top-right-front
+  const key=new THREE.DirectionalLight(0xffffff,1.2)
+  key.position.set(2,3,4); key.castShadow=true
+  key.shadow.mapSize.setScalar(2048)
+  scene.add(key)
+
+  // Fill: soft from left, reduces harsh shadows
+  const fill=new THREE.DirectionalLight(0xddeeff,0.4)
+  fill.position.set(-3,1,2); scene.add(fill)
+
+  // Rim: back edge highlight, separates model from bg
+  const rim=new THREE.DirectionalLight(0xffeedd,0.6)
+  rim.position.set(0,-1,-3); scene.add(rim)
+
+  // Ambient: prevents pitch-black shadows
+  scene.add(new THREE.AmbientLight(0xffffff,0.3))
+
+  // Environment map for chrome/gold reflections
+  const pmrem=new THREE.PMREMGenerator(renderer)
+  pmrem.compileEquirectangularShader()
+  scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture
+  pmrem.dispose()
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 14. FULL EXPORT SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```typescript
+function resolveSize(opts: ExportOptions):[number,number]{
+  return ({
+    auto:[800,800],portrait:[1080,1350],
+    square:[1080,1080],landscape:[1920,1080],
+    custom:[opts.customW??1080,opts.customH??1080]
+  } as any)[opts.size]??[800,800]
+}
+
+function downloadBlob(blob:Blob,name:string){
+  const a=Object.assign(document.createElement('a'),
+    {href:URL.createObjectURL(blob),download:name})
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000)
+}
+
+// GIF
+async function exportGIF(renderer:any,scene:any,camera:any,opts:any){
+  const [w,h]=resolveSize(opts)
+  const frames=Math.floor((opts.duration/1000)*opts.fps)
+  const gif=new GIF({workers:2,quality:{fast:20,balanced:10,high:3}[opts.quality],
+    width:w,height:h,workerScript:'/gif.worker.js'})
+  const orig={w:renderer.domElement.width,h:renderer.domElement.height}
+  renderer.setSize(w,h)
+  for(let i=0;i<frames;i++){
+    scene.rotation.y=(i/frames)*Math.PI*2
+    renderer.render(scene,camera)
+    gif.addFrame(renderer.domElement,{delay:Math.floor(1000/opts.fps),copy:true})
+    opts.onProgress?.(Math.round(i/frames*100),`Rendering frame ${i+1} of ${frames}`)
+    await new Promise(r=>setTimeout(r,0))
+  }
+  renderer.setSize(orig.w,orig.h)
+  gif.render()
+  return new Promise(res=>gif.on('finished',res))
+}
+
+// WebM/MP4
+async function exportVideo(renderer:any,scene:any,camera:any,opts:any){
+  const [w,h]=resolveSize(opts)
+  const bitrate={fast:2_000_000,balanced:5_000_000,high:12_000_000}[opts.quality as string]
+  renderer.setSize(w,h)
+  const stream=renderer.domElement.captureStream(opts.fps)
+  const rec=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp9',videoBitsPerSecond:bitrate})
+  const chunks:BlobPart[]=[]
+  rec.ondataavailable=e=>chunks.push(e.data)
+  rec.start()
+  const start=performance.now()
+  await new Promise<void>(res=>{
+    const tick=()=>{
+      const t=performance.now()-start
+      scene.rotation.y=(t/opts.duration)*Math.PI*2
+      renderer.render(scene,camera)
+      opts.onProgress?.(Math.min(100,Math.round(t/opts.duration*100)))
+      t<opts.duration?requestAnimationFrame(tick):(rec.stop(),res())
+    }
+    requestAnimationFrame(tick)
+  })
+  return new Promise(res=>rec.onstop=()=>res(new Blob(chunks,{type:'video/webm'})))
+}
+
+// PNG/JPG/WebP
+async function exportImage(renderer:any,scene:any,camera:any,opts:any){
+  const [w,h]=resolveSize(opts)
+  const pr={fast:1,balanced:1.5,high:2}[opts.quality as string]
+  const origPR=renderer.getPixelRatio()
+  renderer.setPixelRatio(pr); renderer.setSize(w,h)
+  renderer.render(scene,camera)
+  const mime={png:'image/png',jpg:'image/jpeg',webp:'image/webp'}[opts.format as string]
+  const blob=await new Promise<Blob>(res=>renderer.domElement.toBlob((b:any)=>res(b!),mime,0.95))
+  renderer.setPixelRatio(origPR)
+  return blob
+}
+
+// GLB/OBJ/STL
+function export3DModel(mesh:THREE.Object3D,format:'glb'|'obj'|'stl'){
+  if(format==='glb')
+    new GLTFExporter().parse(mesh,
+      r=>downloadBlob(new Blob([r as ArrayBuffer],{type:'model/gltf-binary'}),'logo.glb'),
+      e=>console.error(e),{binary:true})
+  if(format==='obj')
+    downloadBlob(new Blob([new OBJExporter().parse(mesh as THREE.Mesh)],{type:'text/plain'}),'logo.obj')
+  if(format==='stl'){
+    const stl=new STLExporter().parse(mesh as THREE.Mesh,{binary:true})
+    downloadBlob(new Blob([stl],{type:'application/octet-stream'}),'logo.stl')
+  }
+}
+
+// Download All ZIP
+async function exportAll(mesh:any,renderer:any,scene:any,camera:any,opts:any){
+  const [png,gif,glbBlob]=await Promise.all([
+    exportImage(renderer,scene,camera,{...opts,format:'png'}),
+    exportGIF(renderer,scene,camera,opts),
+    new Promise<Blob>(res=>new GLTFExporter().parse(
+      mesh,r=>res(new Blob([r as ArrayBuffer])),e=>{},{binary:true}))
+  ])
+  const zip=new JSZip()
+  zip.file('logo.png',png); zip.file('logo.gif',gif); zip.file('logo.glb',glbBlob)
+  downloadBlob(await zip.generateAsync({type:'blob'}),'logo-3d-export.zip')
+}
+
+// Watermark (Free plan)
+async function addWatermark(blob:Blob):Promise<Blob>{
+  return new Promise(res=>{
+    const img=new Image(); img.src=URL.createObjectURL(blob)
+    img.onload=()=>{
+      const c=document.createElement('canvas')
+      c.width=img.width; c.height=img.height
+      const ctx=c.getContext('2d')!
+      ctx.drawImage(img,0,0)
+      ctx.font=`${Math.floor(img.width*0.025)}px DM Sans`
+      ctx.fillStyle='rgba(255,255,255,0.5)'
+      ctx.textAlign='right'
+      ctx.fillText('3DLogoLab.io',img.width-16,img.height-16)
+      c.toBlob(b=>res(b!),'image/png')
+    }
+  })
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 15. ZUSTAND STATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```typescript
+interface EditorStore {
+  uploadedFile: File | null
+  uploadedImageUrl: string | null
+  extractedColors: ExtractedColors | null
+  threeDMode: 'textured'|'layered'|'relief'
+  layerCount: number
+  colorSource: 'image'|'material'
+  colorMix: number
+  thickness: number
+  bevel: boolean
+  bevelSize: number
+  bevelSegments: number
+  smoothNormals: boolean
+  sidesMode: 'both'|'front'
+  centerOrigin: boolean
+  scale: number
+  materialTab: 'preset'|'custom'|'advanced'
+  presetMaterial: 'chrome'|'gold'|'cosmic'|'galactic'
+  customMaterial: CustomMaterialOptions
+  advancedMaps: AdvancedMapFiles
+  animationType: AnimationType
+  animationSpeed: number
+  animationPlaying: boolean
+  backgroundColor: string
+  transparentBackground: boolean
+  environment: EnvironmentType
+  ambientIntensity: number
+  directionalIntensity: number
+  shadowEnabled: boolean
+  fogEnabled: boolean
+  gridVisible: boolean
+  wireframeVisible: boolean
+  exportSize: 'auto'|'portrait'|'square'|'landscape'|'custom'
+  exportQuality: 'fast'|'balanced'|'high'
+  exportDuration: number
+  exportFPS: 24|30|60
+  customWidth: number
+  customHeight: number
+  sidebarCollapsed: boolean
+  exportPanelCollapsed: boolean
+  fullscreen: boolean
+  projectName: string
+  history: EditorSnapshot[]
+  historyIndex: number
+  // Actions
+  setUploadedFile: (f:File)=>void
+  setThreeDMode: (m:ThreeDMode)=>void
+  updateShape: (p:Partial<ShapeOptions>)=>void
+  updateMaterial: (p:Partial<MaterialOptions>)=>void
+  updateAnimation: (p:Partial<AnimationOptions>)=>void
+  updateScene: (p:Partial<SceneOptions>)=>void
+  updateExport: (p:Partial<ExportOptions>)=>void
+  undo: ()=>void
+  redo: ()=>void
+  saveToLocalStorage: ()=>void
+  loadFromLocalStorage: ()=>void
+  resetAll: ()=>void
+}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 16. PERFORMANCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- 60fps at all times on modern desktop
+- Image processing in Web Worker (never block main thread)
+- Lazy load Editor page (React.lazy + Suspense)
+- ALWAYS dispose before recreating:
+  geometry.dispose() | material.dispose() | texture.dispose()
+- Memoize textures — skip regeneration if settings unchanged
+- renderer.setAnimationLoop(null) when canvas not visible
+- IntersectionObserver pauses render when off-screen
+- Mobile: pixelRatio = min(devicePixelRatio, 1.5)
+- Image normalized to max 512px before processing
+- ALL URL.createObjectURL paired with URL.revokeObjectURL
+- Restore renderer size after every export
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 17. ERROR HANDLING (every case)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Upload errors:
+- >20MB: shake + red border
+- Wrong format: toast with accepted types
+- Corrupt: "Could not read file" + retry
+- No transparency JPG: yellow warning, proceed
+- Zero visible pixels: specific error + try PNG suggestion
+- Mask all foreground (bg not detected): specific error message
+- Mask inverted: AUTO-CORRECTED silently (log only)
+
+Processing errors:
+- No contour found: "Couldn't detect shape. Try PNG with transparent bg."
+- Too few points: "Image too simple. Try more detailed logo."
+- WebGL not supported: full-page fallback + Chrome/Firefox suggestion
+- Out of memory: "Image too complex. Try smaller or simpler image."
+- UV remap degenerate: skip silently + console.warn
+
+Export errors:
+- MediaRecorder not supported: "Video export needs Chrome"
+- Canvas capture fails: retry once silently then toast
+- GIF worker missing: fallback single-threaded
+- Export cancelled: restore renderer + "Export cancelled" toast
+
+Global:
+- ErrorBoundary wraps entire editor
+- On crash: "Reload Editor" button + collapsible error details
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 18. ACCESSIBILITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- All interactive elements keyboard-navigable (Tab/Enter/Space)
+- All images have alt text
+- All controls have <label>
+- Icon-only buttons: aria-label
+- ARIA live regions for upload status + export progress
+- WCAG AA contrast (4.5:1) on all text
+- canvas: aria-label="3D logo preview" role="img"
+- Sliders: aria-valuemin/max/now
+- Modals: focus trap + aria-modal + aria-labelledby
+- Skip-to-main-content link
+- prefers-reduced-motion: disable non-essential animations
+- Min 44×44px touch targets mobile
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 19. MOBILE RESPONSIVE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Mobile (<768px):
+- Left sidebar → bottom sheet (drag handle)
+- Right panel → FAB → modal
+- Canvas: touch controls
+- Bottom sheet tabs: Upload·Shape·Material·Animation·Scene
+
+Tablet (768–1024px):
+- Left sidebar + canvas (no right panel)
+- Export via floating button + slide-over
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 20. SEO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Landing:
+<title>3DLogoLab — Free 3D Logo Generator Online</title>
+<meta name="description" content="Turn your 2D logo into a 3D animation in seconds."/>
+<meta property="og:title" content="3DLogoLab — Free 3D Logo Generator"/>
+<meta property="og:image" content="/og-image.png"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<link rel="canonical" href="https://3dlogolab.io"/>
+Editor: <meta name="robots" content="noindex"/>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 21. LOCALSTORAGE + UNDO/REDO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Auto-save every 30s + on major changes.
+On load: "Restore session?" banner.
+Keys: 3dlogolab_editor_state | 3dlogolab_last_image | 3dlogolab_project_name
+Undo/Redo: max 50 states | ⌘Z / ⌘⇧Z
+After undo: brief yellow flash on changed control.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 22. TOAST NOTIFICATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+react-hot-toast, bottom-center, dark style.
+✓ "3D model generated!" | ✓ "PNG downloaded · 2.4MB"
+✓ "Settings saved" | ✓ "Link copied"
+✗ "Export failed. Try again." | ✗ "Format not supported"
+⚠ "JPG has no transparency — results may vary"
+ℹ "Tip: PNG with transparent bg gives best results"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 23. FILE STRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+public/
+  favicon.ico | og-image.png | gif.worker.js | robots.txt
+
+src/
+  main.tsx | App.tsx
+  pages/ → Home.tsx | Editor.tsx | Preview.tsx | NotFound.tsx
+  components/
+    layout/    → Navbar.tsx | EditorNavbar.tsx | Footer.tsx
+    landing/   → Hero.tsx | Features.tsx | MaterialShowcase.tsx
+                 BeforeAfter.tsx | HowItWorks.tsx | Pricing.tsx
+                 Testimonials.tsx | FAQ.tsx | UploadZone.tsx
+    canvas/    → ThreeCanvas.tsx | MeshRenderer.tsx | CanvasOverlay.tsx
+                 Placeholder.tsx | PreviewCanvas.tsx | LoadingOverlay.tsx
+                 ErrorOverlay.tsx | ContextMenu.tsx
+    sidebar/   → Sidebar.tsx | ThreeDModeSelector.tsx | UploadSection.tsx
+                 ShapeSection.tsx | ColorSourceSection.tsx
+                 MaterialSection.tsx | PresetTab.tsx | CustomTab.tsx
+                 AdvancedTab.tsx | MaterialPreviewSphere.tsx
+                 AnimationSection.tsx | SceneSection.tsx
+    export/    → ExportPanel.tsx | ExportPreview.tsx | SizeSelector.tsx
+                 QualitySelector.tsx | DurationSelector.tsx
+                 FormatGrid.tsx | ExportProgress.tsx
+                 ShareButtons.tsx | WatermarkNotice.tsx
+    modals/    → UpgradeModal.tsx | KeyboardShortcutsModal.tsx
+                 ResetConfirmModal.tsx
+    ui/        → Button.tsx | Slider.tsx | Toggle.tsx | Tooltip.tsx
+                 ColorPicker.tsx | Accordion.tsx | Badge.tsx
+                 ErrorBoundary.tsx | ProgressBar.tsx | Skeleton.tsx
+  hooks/
+    useImageTo3D.ts | useColorExtraction.ts | useMaterial.ts
+    useAnimation.ts | useExport.ts | useEditorKeyboard.ts
+    useLocalStorage.ts | useUndoRedo.ts | useFullscreen.ts
+  store/
+    editorStore.ts
+  utils/
+    maskBuilder.ts        ← buildAlphaMask + autoCorrectInversion + morphClean
+    marchingSquares.ts    ← contour tracing
+    contourUtils.ts       ← smoothContour + simplifyContour + processContour
+    meshBuilders.ts       ← all 3 strategies + dispatcher
+    kMeans.ts             ← color clustering
+    materials.ts          ← material factory
+    textureGenerators.ts  ← procedural textures
+    colorExtractor.ts     ← dominant colors
+    exportUtils.ts        ← all export functions + watermark
+    fileUtils.ts          ← validation + downloadBlob
+    threeUtils.ts         ← dispose + center helpers
+    noise.ts              ← simplex noise
+    constants.ts
+  types/
+    editor.ts | three.ts | export.ts
+  styles/
+    globals.css | animations.css
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 24. BUILD ORDER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1.  Vite + React + TypeScript + Tailwind + shadcn/ui
+2.  Design tokens + globals.css + fonts
+3.  Zustand store (all interfaces + defaults)
+4.  maskBuilder.ts — buildAlphaMask + autoCorrectInversion + morphClean
+5.  marchingSquares.ts + contourUtils.ts
+6.  imageToOutlineShapes() — full pipeline with debug logging
+7.  ThreeCanvas + 3-point lighting + SRGBColorSpace + ACESFilmic
+8.  Strategy 1: buildTexturedMesh + remapFrontFaceUVs
+9.  Upload section → full pipeline test with:
+    a. Transparent PNG ✓
+    b. Black bg JPG (anime avatar) ✓
+    c. White bg PNG ✓
+    d. Verify mask NOT inverted (check console logs)
+    e. Verify texture appears on front face
+10. ThreeDModeSelector UI
+11. kMeans.ts + Strategy 2: buildMultiLayerMesh
+12. Strategy 3: buildHeightMapMesh
+13. Material system: all 3 tabs + procedural textures
+14. Color extraction + vertex color application
+15. Color Mix slider (Textured mode)
+16. Animation system (all 10 types)
+17. Scene controls
+18. Export panel: Size + Quality + Duration
+19. All export functions (image → GIF → video → 3D → ZIP)
+20. Export preview canvas (separate renderer)
+21. Canvas overlays + context menu
+22. Undo/redo + localStorage
+23. Editor navbar + keyboard shortcuts
+24. Mobile responsive (bottom sheet)
+25. Landing page (all sections)
+26. Watermark + upgrade modal
+27. Toast notifications
+28. SEO meta tags
+29. Error boundaries + all error states
+30. Accessibility audit
+31. Performance optimizations
+32. Final polish
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 25. ABSOLUTE RULES — NEVER VIOLATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✗ NEVER extrude only outer silhouette with flat single color
+✗ NEVER use alpha-only detection on JPG (no alpha channel)
+✗ NEVER assume bright=foreground (black bg exists)
+✗ NEVER skip autoCorrectInversion() — this fixes the flip bug
+✗ NEVER skip remapFrontFaceUVs() — texture will distort
+✗ NEVER call geometry.center() AFTER remapFrontFaceUVs() — order matters
+✗ NEVER set texture.flipY=true on ExtrudeGeometry — must be false
+✗ NEVER skip outputColorSpace=SRGBColorSpace on renderer
+✗ NEVER skip geometry.dispose() when rebuilding mesh
+✗ NEVER block main thread during image processing
+✗ NEVER leave URL.createObjectURL without revokeObjectURL
+✗ NEVER forget to restore renderer size after export
+✗ NEVER make server calls for any core functionality
+✗ NEVER use single color for complex multi-color artwork (use Layered mode)
+✗ NEVER skip computeVertexNormals() after height map displacement

@@ -26,16 +26,17 @@ export function ExportPanel() {
     updateExport,
     requestExport 
   } = useEditorStore();
+  const [selectedFormat, setSelectedFormat] = useState<string>('PNG');
   const [isExporting, setIsExporting] = useState(false);
 
   if (exportPanelCollapsed) return null;
-
-  const handleExport = (format: string) => {
+  
+  const handleExportTrigger = () => {
     if (isProcessing) {
       toast.error('Please wait for 3D generation to finish');
       return;
     }
-    requestExport(format);
+    requestExport(selectedFormat);
   };
 
   const sizes = [
@@ -51,6 +52,26 @@ export function ExportPanel() {
   ];
 
   const fpsOptions = [24, 30, 60];
+
+  const FormatButton = ({ format, icon: Icon, isSmall = false }: { format: string, icon?: any, isSmall?: boolean }) => {
+    const isSelected = selectedFormat === format;
+    return (
+      <button 
+        onClick={() => setSelectedFormat(format)} 
+        className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-300 group ${
+          isSelected 
+            ? 'bg-primary/10 border-primary/40 shadow-[0_0_15px_rgba(var(--primary),0.1)]' 
+            : 'bg-foreground/[0.02] border-foreground/[0.05] hover:bg-foreground/[0.04]'
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          {isSelected && <div className="w-1 h-1 rounded-full bg-primary animate-pulse" />}
+          <span className={`text-[10px] font-bold ${isSelected ? 'text-primary' : 'text-foreground'}`}>{format}</span>
+        </div>
+        {Icon && <Icon className={`w-3.5 h-3.5 transition-colors ${isSelected ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'}`} />}
+      </button>
+    );
+  };
 
   return (
     <div className="w-80 h-full bg-glass-panel backdrop-blur-xl border-l border-foreground/[0.05] flex flex-col overflow-hidden shadow-2xl z-10 relative transition-colors duration-500">
@@ -172,14 +193,8 @@ export function ExportPanel() {
               <Film className="w-3 h-3" /> Video / Animation
             </h3>
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => handleExport('MP4')} className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-foreground/[0.05] hover:bg-primary/5 hover:border-primary/30 transition-all group">
-                <span className="text-[10px] font-bold text-foreground">MP4</span>
-                <Video className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
-              </button>
-              <button onClick={() => handleExport('GIF')} className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-foreground/[0.05] hover:bg-primary/5 hover:border-primary/30 transition-all group">
-                <span className="text-[10px] font-bold text-foreground">GIF</span>
-                <ImageIcon className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
-              </button>
+              <FormatButton format="MP4" icon={Video} />
+              <FormatButton format="GIF" icon={ImageIcon} />
             </div>
           </div>
 
@@ -188,12 +203,8 @@ export function ExportPanel() {
               <ImageIcon className="w-3.5 h-3.5" /> Static Images
             </h3>
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => handleExport('PNG')} className="flex items-center justify-center gap-2 p-2.5 rounded-lg bg-foreground/[0.02] border border-foreground/[0.05] hover:border-foreground/20 transition-all group">
-                <span className="text-[10px] font-bold text-foreground">PNG</span>
-              </button>
-              <button onClick={() => handleExport('JPG')} className="flex items-center justify-center gap-2 p-2.5 rounded-lg bg-foreground/[0.02] border border-foreground/[0.05] hover:border-foreground/20 transition-all group">
-                <span className="text-[10px] font-bold text-foreground">JPG</span>
-              </button>
+              <FormatButton format="PNG" />
+              <FormatButton format="JPG" />
             </div>
           </div>
 
@@ -203,25 +214,34 @@ export function ExportPanel() {
             </h3>
             <div className="grid grid-cols-3 gap-2">
               {['GLB', 'OBJ', 'STL'].map(fmt => (
-                <button key={fmt} onClick={() => handleExport(fmt)} className="p-2.5 rounded-lg bg-foreground/[0.02] border border-foreground/[0.05] hover:border-primary/30 hover:bg-primary/5 transition-all text-center">
-                  <span className="text-[10px] font-bold text-foreground">{fmt}</span>
-                </button>
+                <FormatButton key={fmt} format={fmt} isSmall />
               ))}
             </div>
+          </div>
+
+          <div className="space-y-3">
+            <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+              <BoxIcon className="w-3.5 h-3.5" /> Project Files
+            </h3>
+            <FormatButton format="ZIP Project Archive" icon={Download} />
           </div>
         </div>
       </div>
       
       <div className="p-4 border-t border-foreground/[0.05] bg-foreground/[0.02]">
         <button 
-          onClick={() => handleExport('ZIP Project Archive')}
+          onClick={handleExportTrigger}
           disabled={isExporting}
-          className="w-full py-3.5 bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 text-[11px] rounded-xl font-bold transition-all shadow-lg flex items-center justify-center gap-2.5 active:scale-[0.98]"
+          className="w-full py-3.5 bg-primary text-primary-foreground hover:shadow-primary/20 disabled:opacity-50 text-[11px] rounded-xl font-bold transition-all shadow-lg flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] group"
         >
-          {isExporting ? 'Processing Architecture...' : <><Download className="w-4 h-4" /> Export All Assets</>}
+          <div className="flex items-center gap-2">
+            <Download className={`w-4 h-4 ${isExporting ? 'animate-bounce' : 'group-hover:translate-y-0.5 transition-transform'}`} />
+            <span>{isExporting ? 'Processing Architecture...' : `Download ${selectedFormat}`}</span>
+          </div>
         </button>
         <p className="text-center text-[9px] text-muted-foreground/40 mt-3 font-medium tracking-tight">Free version includes attribution watermark</p>
       </div>
     </div>
+
   );
 }

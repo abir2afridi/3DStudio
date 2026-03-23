@@ -25,42 +25,42 @@ export default function Developer() {
         <div className="h-full w-full bg-[linear-gradient(to_right,#000_1px,transparent_1px),linear-gradient(to_bottom,#000_1px,transparent_1px)] bg-[size:100px_100px]" />
       </div>
 
-      <header className="fixed top-0 w-full z-50 px-12 py-10 flex justify-between items-center mix-blend-difference invert uppercase tracking-[0.4em] text-[10px] font-bold">
+      <header className="fixed top-0 w-full z-50 px-6 md:px-12 py-6 md:py-10 flex justify-between items-center mix-blend-difference invert uppercase tracking-[0.4em] text-[10px] font-bold">
         <Link href="/" className="flex items-center gap-2 hover:opacity-50 transition-opacity">
           <ArrowLeft className="w-4 h-4" />
           <span>Back</span>
         </Link>
-        <span className="opacity-40">System Architect</span>
+        <span className="opacity-40 hidden sm:inline">System Architect</span>
       </header>
 
-      <main className="relative z-10 px-12 pt-40 pb-40 max-w-6xl mx-auto">
+      <main className="relative z-10 px-6 md:px-12 pt-32 md:pt-40 pb-20 md:pb-40 max-w-6xl mx-auto">
         {/* Profile Summary */}
         <motion.section 
           initial="initial"
           animate="animate"
           variants={stagger}
-          className="mb-40"
+          className="mb-20 md:mb-40"
         >
           <motion.div variants={fadeInUp} className="text-[10px] font-bold uppercase tracking-[0.5em] text-black/30 mb-8">
             Lead Developer
           </motion.div>
-          <motion.h1 variants={fadeInUp} className="text-[10vw] md:text-[8vw] font-medium tracking-tighter leading-[0.8] mb-12">
+          <motion.h1 variants={fadeInUp} className="text-[14vw] sm:text-[10vw] md:text-[8vw] font-medium tracking-tighter leading-[0.8] mb-12">
             Abir Hasan <br/> <span className="opacity-30">Siam.</span>
           </motion.h1>
 
-          <motion.div variants={fadeInUp} className="grid grid-cols-2 md:grid-cols-4 gap-12 border-y border-black/[0.08] py-12">
+          <motion.div variants={fadeInUp} className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12 border-y border-black/[0.08] py-8 md:py-12">
             <InfoBox label="Age" value="22" />
-            <InfoBox label="Location" value="Gazipur, BD" />
+            <InfoBox label="Location" value="Gazipur" />
             <InfoBox label="Origin" value="Tangail" />
             <InfoBox label="Blood" value="B+" />
           </motion.div>
         </motion.section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-32">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-20 md:gap-32">
           {/* Education */}
-          <section className="space-y-16">
+          <section className="space-y-12 md:space-y-16">
             <SectionHeader title="Education" icon={<GraduationCap className="w-4 h-4" />} />
-            <div className="space-y-12">
+            <div className="space-y-8 md:space-y-12">
               <EduItem 
                 inst="Independent University of Bangladesh" 
                 deg="BSc in Computer Science" 
@@ -80,9 +80,9 @@ export default function Developer() {
           </section>
 
           {/* Skills */}
-          <section className="space-y-16">
+          <section className="space-y-12 md:space-y-16">
             <SectionHeader title="Technical Stack" icon={<Code className="w-4 h-4" />} />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 md:gap-12">
               <SkillGroup 
                 title="Languages" 
                 items={['Dart (Flutter)', 'React', 'Python', 'JS/TS']} 
@@ -104,18 +104,18 @@ export default function Developer() {
         </div>
 
         {/* Vision & Practice */}
-        <section className="mt-40 pt-40 border-t border-black/[0.08]">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-24">
-            <div className="space-y-10">
+        <section className="mt-20 md:mt-40 pt-20 md:pt-40 border-t border-black/[0.08]">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-16 md:gap-24">
+            <div className="space-y-8 md:space-y-10">
               <SectionHeader title="Notable Practices" icon={<Heart className="w-4 h-4" />} />
-              <ul className="space-y-6 text-sm md:text-md text-black/50 font-light leading-relaxed">
+              <ul className="space-y-4 md:space-y-6 text-sm text-black/50 font-light leading-relaxed">
                 <li>• Clean Flutter project architectural patterns.</li>
                 <li>• Intense focus on step-by-step technical clarity.</li>
                 <li>• Priority on immediate, friction-less launch experiences.</li>
                 <li>• Native-first, multi-OS compatibility strategies.</li>
               </ul>
             </div>
-            <div className="space-y-10">
+            <div className="space-y-8 md:space-y-10">
               <SectionHeader title="Personal Traits" icon={<Briefcase className="w-4 h-4" />} />
               <p className="text-xl md:text-2xl font-medium tracking-tight leading-relaxed">
                 Detail-oriented architect who enjoys experimenting with cross-platform solutions. Keeping systems <span className="opacity-30">clean, optimized, and professional.</span>
@@ -125,10 +125,10 @@ export default function Developer() {
         </section>
 
         {/* Presence */}
-        <section className="mt-40 py-20 bg-[#F9F9F9] border border-black/[0.05] p-12">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-12">
+        <section className="mt-20 md:mt-40 py-12 md:py-20 bg-[#F9F9F9] border border-black/[0.05] p-6 md:p-12">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-10 md:gap-12 text-center md:text-left">
             <div className="text-[10px] font-bold uppercase tracking-[0.5em] text-black/30 italic">Presence</div>
-            <div className="flex flex-wrap justify-center gap-12">
+            <div className="flex flex-wrap justify-center gap-8 md:gap-12">
               <PresenceLink icon={<Github className="w-4 h-4" />} label="GitHub" href="https://github.com/abir2afridi" />
               <PresenceLink icon={<Globe className="w-4 h-4" />} label="Portfolio" href="https://abir2afridi.vercel.app/" />
               <PresenceLink icon={<Mail className="w-4 h-4" />} label="Email" href="mailto:abir2afridi@gmail.com" />
@@ -136,6 +136,7 @@ export default function Developer() {
           </div>
         </section>
       </main>
+
     </div>
   );
 }

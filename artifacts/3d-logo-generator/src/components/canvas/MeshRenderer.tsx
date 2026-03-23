@@ -19,7 +19,7 @@ export function MeshRenderer() {
   useAnimation(groupRef);
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} name="logo-export-group">
       {/* 3D Logo Mesh */}
       {mesh && (
         <primitive 

@@ -26,7 +26,7 @@ export function ExportManager() {
         if (format === 'PNG' || format === 'JPG') {
           exportImage(format);
         } else if (format === 'GLB' || format === 'GLTF') {
-          exportGLTF();
+          await exportGLTF();
         } else if (format === 'STL') {
           exportSTL();
         } else if (format === 'OBJ') {
@@ -109,39 +109,58 @@ export function ExportManager() {
     toast.success(`${format} exported!`);
   };
 
-  const exportGLTF = () => {
+  const exportGLTF = async () => {
     const exporter = new GLTFExporter();
-    exporter.parse(
-      scene,
-      (result: string | ArrayBuffer) => {
-        const output = result instanceof ArrayBuffer ? result : JSON.stringify(result);
-        const blob = new Blob([output], { type: result instanceof ArrayBuffer ? 'application/octet-stream' : 'application/json' });
-        saveBlob(blob, `${projectName.replace(/\s+/g, '_')}.glb`);
-        toast.success('GLB exported!');
-      },
-      (error: ErrorEvent) => {
-        console.error('GLTF export error:', error);
-        toast.error('GLB export failed');
-      },
-      { binary: true }
-    );
+    const loadingToast = toast.loading('Preparing GLB for download...');
+    
+    try {
+      const target = scene.getObjectByName('logo-export-group') || scene;
+      const result = await new Promise((resolve, reject) => {
+        exporter.parse(
+          target,
+          (res: any) => resolve(res),
+          (err: any) => reject(err),
+          { binary: true, onlyVisible: true }
+        );
+      });
+
+      const output = result instanceof ArrayBuffer ? result : JSON.stringify(result);
+      const blob = new Blob([output], { type: result instanceof ArrayBuffer ? 'application/octet-stream' : 'application/json' });
+      saveBlob(blob, `${projectName.replace(/\s+/g, '_')}.glb`);
+      toast.success('GLB exported!', { id: loadingToast });
+    } catch (error) {
+      console.error('GLTF export error:', error);
+      toast.error('GLB export failed', { id: loadingToast });
+    }
   };
 
+
   const exportSTL = () => {
-    const exporter = new STLExporter();
-    const result = exporter.parse(scene);
-    const blob = new Blob([result], { type: 'application/octet-stream' });
-    saveBlob(blob, `${projectName.replace(/\s+/g, '_')}.stl`);
-    toast.success('STL exported!');
+    try {
+      const exporter = new STLExporter();
+      const result = exporter.parse(scene);
+      const blob = new Blob([result], { type: 'application/octet-stream' });
+      saveBlob(blob, `${projectName.replace(/\s+/g, '_')}.stl`);
+      toast.success('STL exported!');
+    } catch (error) {
+      console.error('STL export error:', error);
+      toast.error('STL export failed');
+    }
   };
 
   const exportOBJ = () => {
-    const exporter = new OBJExporter();
-    const result = exporter.parse(scene);
-    const blob = new Blob([result], { type: 'text/plain' });
-    saveBlob(blob, `${projectName.replace(/\s+/g, '_')}.obj`);
-    toast.success('OBJ exported!');
+    try {
+      const exporter = new OBJExporter();
+      const result = exporter.parse(scene);
+      const blob = new Blob([result], { type: 'text/plain' });
+      saveBlob(blob, `${projectName.replace(/\s+/g, '_')}.obj`);
+      toast.success('OBJ exported!');
+    } catch (error) {
+      console.error('OBJ export error:', error);
+      toast.error('OBJ export failed');
+    }
   };
+
 
   const saveBlob = (blob: Blob, filename: string) => {
     const link = document.createElement('a');

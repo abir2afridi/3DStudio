@@ -40,11 +40,13 @@ The world's first browser-native 3D generator. Zero latency. Total privacy. Infi
 This laboratory uses a **pnpm monorepo** architecture.
 
 1. **Install Dependencies**:
+
    ```bash
    pnpm install
    ```
 
 2. **Launch Studio**:
+
    ```bash
    pnpm --filter @workspace/3d-logo-generator dev
    ```

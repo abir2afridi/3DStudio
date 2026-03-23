@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+artifacts/*/node_modules
+artifacts/*/dist
+lib/*/node_modules
+lib/*/dist
+%APPDATA%
+.config
+.local

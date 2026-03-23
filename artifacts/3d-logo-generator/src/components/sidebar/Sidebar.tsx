@@ -3,7 +3,6 @@ import { UploadSection } from './UploadSection';
 import { ThreeDModeSelector } from './ThreeDModeSelector';
 import { ShapeSection } from './ShapeSection';
 import { MaterialsSection } from './MaterialsSection';
-import { AnimationSection } from './AnimationSection';
 import { SceneSection } from './SceneSection';
 import { TextSection } from './TextSection';
 import { EffectsSection } from './EffectsSection';
@@ -37,7 +36,7 @@ const AccordionItem = ({
       >
         <div className="flex items-center gap-2.5">
           <span className={`transition-transform duration-300 ${isOpen ? 'text-primary' : 'text-muted-foreground'}`}>
-            {React.cloneElement(icon as React.ReactElement, { size: 14 })}
+            {React.isValidElement(icon) ? React.cloneElement(icon as React.ReactElement<any>, { size: 14 }) : icon}
           </span>
           <span className={`text-[11px] font-bold uppercase tracking-[0.12em] transition-colors duration-300 ${
             isOpen ? 'text-foreground' : 'text-muted-foreground'
@@ -79,7 +78,7 @@ export function Sidebar() {
           <ThreeDModeSelector />
         </AccordionItem>
 
-        <AccordionItem title="TEXT TO 3D" icon={<Type />}>
+        <AccordionItem title="TEXT TO 3D" icon={<Type />} defaultOpen>
           <TextSection />
         </AccordionItem>
 
@@ -87,19 +86,16 @@ export function Sidebar() {
           <ShapeSection />
         </AccordionItem>
 
-        <AccordionItem title="MATERIAL" icon={<Palette />}>
+        <AccordionItem title="MATERIAL" icon={<Palette />} defaultOpen>
           <MaterialsSection />
         </AccordionItem>
 
-        <AccordionItem title="ANIMATION" icon={<Layers />}>
-          <AnimationSection />
-        </AccordionItem>
 
-        <AccordionItem title="SCENE" icon={<Sun />}>
+        <AccordionItem title="SCENE" icon={<Sun />} defaultOpen>
           <SceneSection />
         </AccordionItem>
 
-        <AccordionItem title="POST EFFECTS" icon={<Sparkles />}>
+        <AccordionItem title="POST EFFECTS" icon={<Sparkles />} defaultOpen>
           <EffectsSection />
         </AccordionItem>
       </div>

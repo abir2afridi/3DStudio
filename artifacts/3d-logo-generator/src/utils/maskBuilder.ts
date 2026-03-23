@@ -98,22 +98,69 @@ export function autoCorrectInversion(mask: Uint8Array, total: number): Uint8Arra
 // Morphological cleanup — remove noise, fill holes
 export function morphClean(mask: Uint8Array, w: number, h: number): Uint8Array {
   const cleaned = new Uint8Array(mask);
-  // Erosion: remove isolated pixels
+  // Erosion: remove isolated orphan pixels (noise)
+  // We check the 4-neighborhood to see if a pixel is truly isolated
   for (let y=1; y<h-1; y++) for (let x=1; x<w-1; x++) {
     const idx=y*w+x;
     if (mask[idx]===0) continue;
-    const fg = mask[idx-w]+mask[idx+w]+mask[idx-1]+mask[idx+1]+
-               mask[idx-w-1]+mask[idx-w+1]+mask[idx+w-1]+mask[idx+w+1];
-    if (fg<2) cleaned[idx]=0;
+    const fg = mask[idx-w]+mask[idx+w]+mask[idx-1]+mask[idx+1];
+    if (fg === 0) {
+      cleaned[idx]=0;
+    }
   }
-  // Dilation: fill interior holes
-  const dilated = new Uint8Array(cleaned);
-  for (let y=1; y<h-1; y++) for (let x=1; x<w-1; x++) {
-    const idx=y*w+x;
-    if (cleaned[idx]===1) continue;
-    const fg = cleaned[idx-w]+cleaned[idx+w]+cleaned[idx-1]+cleaned[idx+1]+
-               cleaned[idx-w-1]+cleaned[idx-w+1]+cleaned[idx+w-1]+cleaned[idx+w+1];
-    if (fg>=6) dilated[idx]=1;
+  return cleaned;
+}
+
+/**
+ * Fills internal holes in a binary mask using flood-fill from the border.
+ * Any background pixel NOT reachable from the border is considered an internal hole.
+ */
+export function fillHoles(mask: Uint8Array, w: number, h: number): Uint8Array {
+  const total = w * h;
+  const visited = new Uint8Array(total);
+  const queue: number[] = [];
+
+  // Start from border and flood fill background (0) pixels
+  for (let x = 0; x < w; x++) {
+    if (mask[x] === 0) queue.push(x);
+    if (mask[(h - 1) * w + x] === 0) queue.push((h - 1) * w + x);
   }
-  return dilated;
+  for (let y = 0; y < h; y++) {
+    if (mask[y * w] === 0) queue.push(y * w);
+    if (mask[y * w + w - 1] === 0) queue.push(y * w + w - 1);
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const idx = queue[head++];
+    if (visited[idx]) continue;
+    visited[idx] = 1;
+
+    const x = idx % w;
+    const y = Math.floor(idx / w);
+    
+    // Check 4-neighbors
+    const neighbors = [
+      y > 0 ? idx - w : -1,
+      y < h - 1 ? idx + w : -1,
+      x > 0 ? idx - 1 : -1,
+      x < w - 1 ? idx + 1 : -1,
+    ];
+    
+    for (const n of neighbors) {
+      if (n >= 0 && !visited[n] && mask[n] === 0) {
+        queue.push(n);
+      }
+    }
+  }
+
+  // Any pixel that was 0 but NOT visited during border-flood-fill is a hole
+  const filled = new Uint8Array(mask);
+  for (let i = 0; i < total; i++) {
+    if (mask[i] === 0 && !visited[i]) {
+      filled[i] = 1;
+    }
+  }
+
+  return filled;
 }

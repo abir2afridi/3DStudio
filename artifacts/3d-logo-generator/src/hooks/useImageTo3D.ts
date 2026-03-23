@@ -23,9 +23,17 @@ export function useImageTo3D() {
   const invertImage = useEditorStore(s => (s as any).invertImage ?? false);
   const quality = useEditorStore(s => (s as any).quality ?? 'balanced');
   const smoothing = useEditorStore(s => (s as any).smoothing ?? 3);
+  const textureScale = useEditorStore(s => (s as any).textureScale ?? 1.0);
+  const textureOffsetX = useEditorStore(s => (s as any).textureOffsetX ?? 0.0);
+  const textureOffsetY = useEditorStore(s => (s as any).textureOffsetY ?? 0.0);
+  const textureRotation = useEditorStore(s => (s as any).textureRotation ?? 0.0);
   const materialTab = useEditorStore(s => s.materialTab);
   const presetMaterial = useEditorStore(s => s.presetMaterial);
   const customMaterial = useEditorStore(s => s.customMaterial);
+  const studioDetail = useEditorStore(s => (s as any).studioDetail ?? true);
+  const studioStyle = useEditorStore(s => (s as any).studioStyle ?? 'sculpted');
+  const studioGlass = useEditorStore(s => (s as any).studioGlass ?? false);
+  const studioRemoveHoles = useEditorStore(s => (s as any).studioRemoveHoles ?? false);
   
   const currentMeshRef = useRef<THREE.Object3D | null>(null);
 
@@ -54,6 +62,11 @@ export function useImageTo3D() {
           thickness, bevel, bevelSize, bevelSegments, smoothNormals,
           sidesMode: 'both' as const, centerOrigin: true, scale,
           quality, smoothing, invertImage,
+          textureScale, textureOffsetX, textureOffsetY, textureRotation,
+          studioDetail,
+          studioStyle,
+          studioGlass,
+          studioRemoveHoles,
           material: materialOpts
         };
 
@@ -87,8 +100,8 @@ export function useImageTo3D() {
   }, [
     uploadedFile, threeDMode, layerCount, colorSource, colorMix, thickness,
     bevel, bevelSize, bevelSegments, smoothNormals, scale, invertImage,
-    quality, smoothing,
-    materialTab, presetMaterial, customMaterial, setProcessingState
+    quality, smoothing, textureScale, textureOffsetX, textureOffsetY, textureRotation,
+    materialTab, presetMaterial, customMaterial, studioDetail, studioStyle, studioGlass, studioRemoveHoles, setProcessingState
   ]);
 
   return { mesh };

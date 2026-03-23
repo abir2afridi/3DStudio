@@ -1,4 +1,4 @@
-export type ThreeDMode = 'textured' | 'layered' | 'relief' | 'voxel' | 'neon' | 'crystal' | 'wireframe' | 'inflated' | 'clay' | 'hologram' | 'blueprint';
+export type ThreeDMode = 'textured' | 'layered' | 'relief' | 'voxel' | 'neon' | 'crystal' | 'wireframe' | 'inflated' | 'clay' | 'hologram' | 'blueprint' | 'studio';
 export type GenerationQuality = 'draft' | 'balanced' | 'high';
 export type AnimationType = 'none'|'rotateY'|'bounce'|'spinTilt'|'pendulum'|'float'|'pulse'|'wobble'|'orbit'|'heartbeat';
 export type EnvironmentType = 'studio'|'sunset'|'forest'|'night'|'warehouse'|'none';
@@ -53,6 +53,14 @@ export interface ShapeOptions {
   quality: GenerationQuality;
   smoothing: number;
   invertImage: boolean;
+  textureScale?: number;
+  textureOffsetX?: number;
+  textureOffsetY?: number;
+  textureRotation?: number;
+  studioDetail: boolean;
+  studioStyle?: 'solid' | 'sculpted' | 'layered' | 'outline';
+  studioGlass?: boolean;
+  studioRemoveHoles?: boolean;
 }
 
 export interface AnimationOptions {
@@ -139,6 +147,13 @@ export interface EditorState {
   centerOrigin: boolean;
   scale: number;
   invertImage: boolean;
+  textureScale: number;
+  textureOffsetX: number;
+  textureOffsetY: number;
+  studioDetail: boolean;
+  studioStyle: 'solid' | 'sculpted' | 'layered' | 'outline';
+  studioGlass: boolean;
+  studioRemoveHoles: boolean;
   
   // Text to 3D
   textEnabled: boolean;

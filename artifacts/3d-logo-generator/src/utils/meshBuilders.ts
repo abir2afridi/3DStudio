@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ShapeOptions, GenerationQuality } from '@/types/editor';
-import { buildAlphaMask } from './maskBuilder';
+import { buildAlphaMask, fillHoles } from './maskBuilder';
 import { marchingSquares } from './marchingSquares';
 import { smoothContour, simplifyContour } from './contourUtils';
 import { kMeansCluster, getLuminance } from './kMeans';
@@ -60,45 +60,80 @@ function buildShapesWithHoles(
 ): THREE.Shape[] {
   if (contours.length === 0) return [];
 
-  // Sort by absolute area descending (largest = most likely outer boundary)
+  // Sort by absolute area descending
   const sorted = contours
     .map(pts => ({ pts, absArea: Math.abs(signedArea(pts)) }))
     .sort((a, b) => b.absArea - a.absArea);
 
-  // Discard tiny noise contours (< 0.5% of the largest)
-  const minArea = sorted[0].absArea * 0.005;
+  // Lower noise threshold for better small detail (0.1% instead of 0.5%)
+  const minArea = sorted[0].absArea * 0.001;
   const significant = sorted.filter(c => c.absArea > minArea);
 
-  const shapes: THREE.Shape[] = [];
-  const usedAsHole = new Set<number>();
-
+  // 1. Identify immediate parent for each contour
+  const parents = new Array(significant.length).fill(-1);
   for (let i = 0; i < significant.length; i++) {
-    if (usedAsHole.has(i)) continue;
-
-    const outer = significant[i].pts;
-    const nOuter = normalizePts(outer, maxD, w, h);
-    const shape = new THREE.Shape();
-    nOuter.forEach((pt, idx) => idx === 0 ? shape.moveTo(pt.x, pt.y) : shape.lineTo(pt.x, pt.y));
-    shape.closePath();
-
-    // Any smaller contour whose representative point is inside `outer` becomes a hole.
-    for (let j = i + 1; j < significant.length; j++) {
-      if (usedAsHole.has(j)) continue;
-      const inner = significant[j].pts;
-      // Test middle point for robustness (avoids edge-pixel ambiguity at index 0)
-      const testPt = inner[Math.floor(inner.length / 2)];
-      if (pointInPolygon(testPt.x, testPt.y, outer)) {
-        const nInner = normalizePts(inner, maxD, w, h);
-        const hole = new THREE.Path();
-        nInner.forEach((pt, idx) => idx === 0 ? hole.moveTo(pt.x, pt.y) : hole.lineTo(pt.x, pt.y));
-        hole.closePath();
-        shape.holes.push(hole);
-        usedAsHole.add(j);
+    const testPt = significant[i].pts[Math.floor(significant[i].pts.length / 2)];
+    for (let j = 0; j < significant.length; j++) {
+      if (i === j) continue;
+      if (pointInPolygon(testPt.x, testPt.y, significant[j].pts)) {
+        // j is an ancestor of i. We want the tightest parent (smallest area).
+        if (parents[i] === -1 || significant[j].absArea < significant[parents[i]].absArea) {
+          parents[i] = j;
+        }
       }
     }
-
-    shapes.push(shape);
   }
+
+  // 2. Calculate nesting depth for each contour
+  const depths = new Array(significant.length).fill(0);
+  for (let i = 0; i < significant.length; i++) {
+    let p = parents[i];
+    while (p !== -1) {
+      depths[i]++;
+      p = parents[p];
+    }
+  }
+
+  // 3. Convert to THREE.Shape and THREE.Path (holes)
+  const shapes: THREE.Shape[] = [];
+  // Store indices to facilitate connecting holes to parents
+  const indexToShape = new Map<number, THREE.Shape>();
+
+  for (let i = 0; i < significant.length; i++) {
+    const isHole = depths[i] % 2 === 1;
+    const nPts = normalizePts(significant[i].pts, maxD, w, h);
+    
+    if (!isHole) {
+      const shape = new THREE.Shape();
+      nPts.forEach((pt, idx) => idx === 0 ? shape.moveTo(pt.x, pt.y) : shape.lineTo(pt.x, pt.y));
+      shape.closePath();
+      shapes.push(shape);
+      indexToShape.set(i, shape);
+    } else {
+      const path = new THREE.Path();
+      nPts.forEach((pt, idx) => idx === 0 ? path.moveTo(pt.x, pt.y) : path.lineTo(pt.x, pt.y));
+      path.closePath();
+      
+      // Find the nearest ancestor that is a Shape (even depth)
+      let ancestorIdx = parents[i];
+      while (ancestorIdx !== -1 && depths[ancestorIdx] % 2 !== 0) {
+        ancestorIdx = parents[ancestorIdx];
+      }
+      
+      const parentShape = indexToShape.get(ancestorIdx);
+      if (parentShape) {
+        parentShape.holes.push(path);
+      } else {
+        // Fallback: If no shape parent found, treat as separate shape
+        const shape = new THREE.Shape();
+        nPts.forEach((pt, idx) => idx === 0 ? shape.moveTo(pt.x, pt.y) : shape.lineTo(pt.x, pt.y));
+        shape.closePath();
+        shapes.push(shape);
+      }
+    }
+  }
+
+  console.log(`[Shapes] ${shapes.length} outer shapes created from ${significant.length} contours.`);
   return shapes;
 }
 
@@ -109,7 +144,7 @@ async function imageToOutlineShapes(
   smoothing: number,
   invertImage: boolean,
   reportProgress?: (p: string) => void
-): Promise<THREE.Shape[]> {
+): Promise<{ shapes: THREE.Shape[]; w: number; h: number; maxD: number }> {
   reportProgress?.('Reading image pixels...');
   const url = URL.createObjectURL(file);
   const img = await new Promise<HTMLImageElement>((res, rej) => {
@@ -150,36 +185,49 @@ async function imageToOutlineShapes(
   const shapes = buildShapesWithHoles(processed, maxD, w, h);
 
   console.log(`[Shapes] ${shapes.length} shapes, ${shapes.reduce((s, sh) => s + sh.holes.length, 0)} holes`);
-  return shapes;
+  return { shapes, w, h, maxD };
 }
 
-function remapFrontFaceUVs(geo: THREE.ExtrudeGeometry) {
+function remapFrontFaceUVs(geo: THREE.ExtrudeGeometry, canvasW?: number, canvasH?: number, maxDim?: number) {
   if (!geo.groups || geo.groups.length < 2) {
     console.warn('[UV] No groups found'); return;
   }
   const uv = geo.attributes.uv as THREE.BufferAttribute;
   const g = geo.groups[0]; // front face
-  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
 
-  for (let i = g.start; i < g.start + g.count; i++) {
-    const u = uv.getX(i), v = uv.getY(i);
-    if (u < minU) minU = u; if (u > maxU) maxU = u;
-    if (v < minV) minV = v; if (v > maxV) maxV = v;
-  }
-
-  const rU = maxU - minU, rV = maxV - minV;
-  if (rU < 0.0001 || rV < 0.0001) { console.warn('[UV] Degenerate range'); return; }
-
-  for (let i = g.start; i < g.start + g.count; i++) {
-    uv.setXY(i, (uv.getX(i) - minU) / rU, (uv.getY(i) - minV) / rV);
+  // If we have canvas dimension info, we can do a "Canvas Perfect" mapping
+  if (canvasW && canvasH && maxDim) {
+    const wRatio = maxDim / canvasW;
+    const hRatio = maxDim / canvasH;
+    
+    for (let i = g.start; i < g.start + g.count; i++) {
+      const x = uv.getX(i);
+      const y = uv.getY(i);
+      // The vertices are in centered normalized space [-w/2maxD, w/2maxD]
+      // So we map them back to [0, 1] relative to the canvas
+      const u = x * wRatio + 0.5;
+      const v = y * hRatio + 0.5;
+      uv.setXY(i, u, v);
+    }
+  } else {
+    // Original logic: Tight stretch to bounding box
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (let i = g.start; i < g.start + g.count; i++) {
+      const u = uv.getX(i), v = uv.getY(i);
+      if (u < minU) minU = u; if (u > maxU) maxU = u;
+      if (v < minV) minV = v; if (v > maxV) maxV = v;
+    }
+    const rU = (maxU - minU) || 1, rV = (maxV - minV) || 1;
+    for (let i = g.start; i < g.start + g.count; i++) {
+      uv.setXY(i, (uv.getX(i) - minU) / rU, (uv.getY(i) - minV) / rV);
+    }
   }
   uv.needsUpdate = true;
-  console.log(`[UV] Remapped: U[${minU.toFixed(3)}–${maxU.toFixed(3)}] V[${minV.toFixed(3)}–${maxV.toFixed(3)}]`);
 }
 
 // ━━━ STRATEGY 1: TEXTURED EXTRUSION ━━━
 async function buildTexturedMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Mesh> {
-  const shapes = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
+  const { shapes, w, h, maxD } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
   if (!shapes.length) throw new Error('No shape extracted');
 
   const geometry = new THREE.ExtrudeGeometry(shapes, {
@@ -194,7 +242,7 @@ async function buildTexturedMesh(file: File, opts: ShapeOptions, reportProgress?
   // CRITICAL ORDER: center FIRST, then remap UVs
   geometry.center();
   if (opts.smoothNormals) geometry.computeVertexNormals();
-  remapFrontFaceUVs(geometry);
+  remapFrontFaceUVs(geometry, w, h, maxD);
 
   reportProgress?.('Applying material & texture...');
   
@@ -214,6 +262,18 @@ async function buildTexturedMesh(file: File, opts: ShapeOptions, reportProgress?
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.flipY = true;
+  
+  // Apply texture transformation
+  const tScale = opts.textureScale ?? 1.0;
+  tex.repeat.set(1 / tScale, 1 / tScale);
+  tex.offset.set((opts.textureOffsetX ?? 0) / 100, (opts.textureOffsetY ?? 0) / 100);
+  tex.rotation = (opts.textureRotation ?? 0) * (Math.PI / 180);
+  tex.center.set(0.5, 0.5);
+  
+  // Enable wrapping so texture doesn't disappear when offset
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  
   tex.needsUpdate = true;
 
   const frontMat = new THREE.MeshPhysicalMaterial({
@@ -484,7 +544,7 @@ async function buildVoxelMesh(file: File, opts: ShapeOptions, reportProgress?: (
 
 // ━━━ STRATEGY 5: NEON TUBE ━━━
 async function buildNeonMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Object3D> {
-  const shapes = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
+  const { shapes } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
   if (!shapes.length) throw new Error('No shape extracted for neon mode');
 
   const group = new THREE.Group();
@@ -536,7 +596,7 @@ async function buildNeonMesh(file: File, opts: ShapeOptions, reportProgress?: (p
 
 // ━━━ STRATEGY 6: CRYSTAL / GLASS ━━━
 async function buildCrystalMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Mesh> {
-  const shapes = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
+  const { shapes } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
   if (!shapes.length) throw new Error('No shape extracted for crystal mode');
 
   const geometry = new THREE.ExtrudeGeometry(shapes, {
@@ -573,7 +633,7 @@ async function buildCrystalMesh(file: File, opts: ShapeOptions, reportProgress?:
 
 // ━━━ STRATEGY 7: HOLO WIREFRAME ━━━
 async function buildWireframeMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Mesh> {
-  const shapes = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
+  const { shapes } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
   if (!shapes.length) throw new Error('No shape extracted for wireframe mode');
 
   const geometry = new THREE.ExtrudeGeometry(shapes, {
@@ -605,7 +665,7 @@ async function buildWireframeMesh(file: File, opts: ShapeOptions, reportProgress
 
 // ━━━ STRATEGY 8: INFLATED / SOFT ━━━
 async function buildInflatedMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Mesh> {
-  const shapes = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 5, opts.invertImage, reportProgress);
+  const { shapes } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 5, opts.invertImage, reportProgress);
   if (!shapes.length) throw new Error('No shape extracted');
 
   const geometry = new THREE.ExtrudeGeometry(shapes, {
@@ -640,7 +700,7 @@ async function buildInflatedMesh(file: File, opts: ShapeOptions, reportProgress?
 
 // ━━━ STRATEGY 9: CLAY / MATTE ━━━
 async function buildClayMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Mesh> {
-  const shapes = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 4, opts.invertImage, reportProgress);
+  const { shapes } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 4, opts.invertImage, reportProgress);
   if (!shapes.length) throw new Error('No shape extracted');
 
   const geometry = new THREE.ExtrudeGeometry(shapes, {
@@ -671,7 +731,7 @@ async function buildClayMesh(file: File, opts: ShapeOptions, reportProgress?: (p
 
 // ━━━ STRATEGY 10: HOLOGRAM ━━━
 async function buildHologramMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Mesh> {
-  const shapes = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
+  const { shapes } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage, reportProgress);
   if (!shapes.length) throw new Error('No shape extracted');
 
   const geometry = new THREE.ExtrudeGeometry(shapes, {
@@ -700,7 +760,7 @@ async function buildHologramMesh(file: File, opts: ShapeOptions, reportProgress?
 
 // ━━━ STRATEGY 11: BLUEPRINT ━━━
 async function buildBlueprintMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Group> {
-  const shapes = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 0, opts.invertImage, reportProgress);
+  const { shapes } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 0, opts.invertImage, reportProgress);
   if (!shapes.length) throw new Error('No shape extracted');
 
   const group = new THREE.Group();
@@ -728,6 +788,284 @@ async function buildBlueprintMesh(file: File, opts: ShapeOptions, reportProgress
   return group;
 }
 
+// ━━━ STRATEGY 12: STUDIO / CLEAN ━━━
+// ━━━ STRATEGY 12: STUDIO / CLEAN (SCULPTED) ━━━
+async function buildStudioMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Object3D> {
+  const style = (opts as any).studioStyle || (opts.studioDetail ? 'sculpted' : 'solid');
+
+  // Case 1: Pure Solid Silhouette
+  if (style === 'solid') {
+    reportProgress?.('Building solid silhouette...');
+    return await buildStudioMeshBasic(file, opts);
+  }
+
+  // Common analysis for Sculpted and Layered
+  reportProgress?.('Analyzing logo sculpture...');
+  const url = URL.createObjectURL(file);
+  const img = await new Promise<HTMLImageElement>((res, rej) => {
+    const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url;
+  });
+  URL.revokeObjectURL(url);
+
+  const { maxDim, rdpTol } = QUALITY_PARAMS[opts.quality ?? 'balanced'];
+  const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+  const w = Math.floor(img.width * scale), h = Math.floor(img.height * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  if (opts.invertImage) ctx.filter = 'invert(100%)';
+  ctx.drawImage(img, 0, 0, w, h);
+  if (opts.invertImage) ctx.filter = 'none';
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const fgMask = buildAlphaMask(imageData);
+  const smooth = opts.smoothing ?? 3;
+  const maxD = Math.max(w, h);
+  const baseThickness = opts.thickness / 40;
+  const mat = buildSelectedMaterial(opts);
+
+  const group = new THREE.Group();
+
+  // Case 2: Sculpted (Base + Relief)
+  if (style === 'sculpted') {
+    const baseMask = opts.studioRemoveHoles ? fillHoles(fgMask, w, h) : fgMask;
+    const baseContours = marchingSquares(baseMask, w, h);
+    if (baseContours.length) {
+      const processedBase = baseContours
+        .map(c => simplifyContour(smoothContour(c, smooth), rdpTol))
+        .filter(c => c.length >= 3);
+      const baseShapes = buildShapesWithHoles(processedBase, maxD, w, h);
+      const baseGeo = new THREE.ExtrudeGeometry(baseShapes, {
+        depth: baseThickness,
+        bevelEnabled: opts.bevel ?? true,
+        bevelThickness: opts.bevelSize / 400,
+        bevelSize: opts.bevelSize / 500,
+      });
+      if (opts.smoothNormals) baseGeo.computeVertexNormals();
+      baseGeo.center();
+
+      // The base mesh (flat background layer) is removed as per user's request.
+    }
+
+    // Add sculpted relief layers (the detailed structure)
+    const maskedData = new Uint8ClampedArray(imageData.data);
+    for (let i = 0; i < fgMask.length; i++) {
+      if (fgMask[i] === 0) maskedData[i * 4 + 3] = 0;
+    }
+    const detailCount = Math.min(6, (opts.layerCount ?? 4));
+    const clusters = kMeansCluster(new ImageData(maskedData, w, h), detailCount);
+    clusters.sort((a, b) => getLuminance(b.color) - getLuminance(a.color));
+
+    reportProgress?.(`Adding ${clusters.length} premium sculpted details...`);
+    const surfaceZ = 0; // Surface at 0 since there's no base block
+    const reliefDepth = baseThickness / 2; // Extra depth for the single layer sculpture
+
+    for (let i = 0; i < clusters.length; i++) {
+      const cluster = clusters[i];
+      const clusterMask = opts.studioRemoveHoles ? fillHoles(cluster.mask, w, h) : cluster.mask;
+      const rawContours = marchingSquares(clusterMask, w, h);
+      if (!rawContours.length) continue;
+      const processed = rawContours
+        .map(c => simplifyContour(smoothContour(c, smooth), rdpTol))
+        .filter(c => c.length >= 3);
+      const shapes = buildShapesWithHoles(processed, maxD, w, h);
+      if (!shapes.length) continue;
+
+      const geo = new THREE.ExtrudeGeometry(shapes, {
+        depth: reliefDepth,
+        bevelEnabled: opts.bevel ?? true,
+        bevelThickness: opts.bevelSize / 600,
+        bevelSize: opts.bevelSize / 600,
+        bevelSegments: 4,
+      });
+      
+      const detailColor = new THREE.Color(mat.color).multiplyScalar(1.0 + (i * 0.05));
+      const detailMat = new THREE.MeshPhysicalMaterial({
+        color: detailColor,
+        metalness: 0.8,
+        roughness: 0.15,
+        clearcoat: 1.0,
+        emissive: detailColor,
+        emissiveIntensity: 0.1, // Subtle highlight glow
+      });
+
+      const mesh = new THREE.Mesh(geo, detailMat);
+      mesh.position.z = surfaceZ + (i * 0.01);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+  }
+
+  // Case 3 & 4: Structure & Outline (wire-frame tubes from internal detail outlines)
+  if (style === 'layered' || style === 'outline') {
+    reportProgress?.('Analyzing internal structure...');
+
+    // Extract detail layers for a "Detailed Outline"
+    const maskedData = new Uint8ClampedArray(imageData.data);
+    for (let i = 0; i < fgMask.length; i++) {
+        if (fgMask[i] === 0) maskedData[i * 4 + 3] = 0;
+    }
+    
+    // --- PERFORMANCE OPTIMIZATION ---
+    const isOutline = style === 'outline';
+    const structureRdpTol = isOutline ? rdpTol * 1.5 : rdpTol * 2.5; 
+
+    // Initializing structure analysis parameters
+    const allContours: {x: number, y: number}[][] = [];
+    const seenHashes = new Set<string>();
+    
+    // We use clusters to find internal detail structures
+    const detailCount = isOutline ? 12 : Math.min(8, (opts.layerCount ?? 4) + 2);
+    const clusters = kMeansCluster(new ImageData(maskedData, w, h), detailCount);
+
+    // For Outline mode, we use the TOTAL foreground mask to get a single, highly detailed outline.
+    // This avoids the 'double layer' problem created by overlapping clusters.
+    const clustersToUse = isOutline ? [{ mask: fgMask }] : clusters;
+
+    for (const cluster of clustersToUse) {
+      const clusterContours = marchingSquares(cluster.mask, w, h);
+      for (const c of clusterContours) {
+        if (c.length < (isOutline ? 4 : 8)) continue; 
+        const processed = simplifyContour(smoothContour(c, smooth), structureRdpTol);
+        if (processed.length < (isOutline ? 2 : 3)) continue;
+        
+        // Robust deduplication
+        const hash = `${Math.round(processed[0].x/10)},${Math.round(processed[0].y/10)},${processed.length}`;
+        if (!seenHashes.has(hash)) {
+          allContours.push(processed);
+          seenHashes.add(hash);
+        }
+      }
+    }
+
+    if (!allContours.length) return await buildStudioMeshBasic(file, opts);
+
+    // Outline mode uses thicker tubes and very close layers
+    const tubeRadius = isOutline ? baseThickness / 60 : baseThickness / 140; 
+    const totalDepth = isOutline ? 0 : baseThickness; // No depth for single outline
+    const layerCount = isOutline ? 1 : Math.max(2, opts.layerCount ?? 4);
+
+    const baseColor = mat.color || new THREE.Color(0xcccccc);
+
+    for (let layer = 0; layer < layerCount; layer++) {
+      const layerProgress = layerCount <= 1 ? 0 : (layer / (layerCount - 1));
+      // For outline mode, ensure it's STRICTLY centered at 0
+      const z = isOutline ? 0 : (layerProgress * totalDepth - (totalDepth / 2));
+      
+      const layerMat = new THREE.MeshPhysicalMaterial({
+        color: new THREE.Color(baseColor).lerp(new THREE.Color(0xffffff), layerProgress * 0.4),
+        metalness: 1.0,
+        roughness: 0.1,
+        clearcoat: 1.0,
+        emissive: baseColor,
+        emissiveIntensity: isOutline ? 0.3 : (0.2 + (layerProgress * 0.3)),
+        transparent: true,
+        opacity: isOutline ? 0.95 : (0.6 + (layerProgress * 0.3)),
+        side: THREE.DoubleSide,
+      });
+
+      const layerGeometries: THREE.BufferGeometry[] = [];
+
+      for (const contour of allContours) {
+        const points3D = contour.map((pt: {x: number, y: number}) => {
+          const x = (pt.x / maxD - 0.5);
+          const y = -(pt.y / maxD - (h / maxD) * 0.5);
+          return new THREE.Vector3(x, y, z);
+        });
+        points3D.push(points3D[0].clone());
+
+        const curve = new THREE.CatmullRomCurve3(points3D, false, 'catmullrom', 0.2);
+        
+        const tubularSegments = Math.max(8, Math.floor(points3D.length * (isOutline ? 1.2 : 0.8)));
+        const radialSegments = isOutline ? 4 : 3; 
+        
+        const tubeGeo = new THREE.TubeGeometry(curve, tubularSegments, tubeRadius, radialSegments, false);
+        layerGeometries.push(tubeGeo);
+      }
+
+      if (layerGeometries.length > 0) {
+        const mergedGeo = layerGeometries.length > 1 
+          ? (await import('three/examples/jsm/utils/BufferGeometryUtils.js')).mergeGeometries(layerGeometries)
+          : layerGeometries[0];
+          
+        const layerMesh = new THREE.Mesh(mergedGeo, layerMat);
+        layerMesh.castShadow = true;
+        layerMesh.receiveShadow = true;
+        group.add(layerMesh);
+        
+        if (layerGeometries.length > 1) {
+          layerGeometries.forEach(g => g.dispose());
+        }
+      }
+    }
+
+    // Struts are only for the spaced-out 'layered' mode
+    if (!isOutline) {
+      reportProgress?.('Adding structural connectors...');
+      const strutRadius = tubeRadius * 0.6;
+      const strutMat = new THREE.MeshPhysicalMaterial({
+          color: baseColor,
+          transparent: true,
+          opacity: 0.3,
+          metalness: 0.5,
+          roughness: 0.8
+      });
+
+      const sortedContours = [...allContours].sort((a, b) => b.length - a.length);
+      const mainContours = sortedContours.slice(0, 2); 
+      const strutGeos: THREE.BufferGeometry[] = [];
+
+      for (const contour of mainContours) {
+        const strutInterval = Math.max(8, Math.floor(contour.length / 8));
+        for (let p = 0; p < contour.length; p += strutInterval) {
+          const pt = contour[p];
+          const x = (pt.x / maxD - 0.5);
+          const y = -(pt.y / maxD - (h / maxD) * 0.5);
+          
+          for (let layer = 0; layer < layerCount - 1; layer++) {
+            const z1 = (layer / (layerCount - 1)) * totalDepth - (totalDepth / 2);
+            const z2 = ((layer + 1) / (layerCount - 1)) * totalDepth - (totalDepth / 2);
+
+            const strutPath = new THREE.LineCurve3(new THREE.Vector3(x, y, z1), new THREE.Vector3(x, y, z2));
+            const strutGeo = new THREE.TubeGeometry(strutPath, 1, strutRadius, 3, false);
+            strutGeos.push(strutGeo);
+          }
+        }
+      }
+
+      if (strutGeos.length > 0) {
+        const mergedStruts = (await import('three/examples/jsm/utils/BufferGeometryUtils.js')).mergeGeometries(strutGeos);
+        const strutMesh = new THREE.Mesh(mergedStruts, strutMat);
+        group.add(strutMesh);
+        strutGeos.forEach(g => g.dispose());
+      }
+    }
+  }
+
+  if (group.children.length === 0) return await buildStudioMeshBasic(file, opts);
+
+  // Center the entire group
+  const box = new THREE.Box3().setFromObject(group);
+  const center = box.getCenter(new THREE.Vector3());
+  group.position.sub(center);
+
+  return group;
+}
+
+// ━━━ STUDIO FALLBACK ━━━
+async function buildStudioMeshBasic(file: File, opts: ShapeOptions): Promise<THREE.Mesh> {
+  const { shapes } = await imageToOutlineShapes(file, opts.quality ?? 'balanced', opts.smoothing ?? 3, opts.invertImage);
+  const geometry = new THREE.ExtrudeGeometry(shapes, {
+    depth: opts.thickness / 40,
+    bevelEnabled: opts.bevel ?? true,
+    bevelThickness: opts.bevelSize / 400,
+    bevelSize: opts.bevelSize / 500,
+  });
+  if (opts.smoothNormals) geometry.computeVertexNormals();
+  geometry.center();
+  const mesh = new THREE.Mesh(geometry, buildSelectedMaterial(opts));
+  return mesh;
+}
+
 // ━━━ MAIN DISPATCHER ━━━
 export async function buildMesh(file: File, opts: ShapeOptions, reportProgress?: (p: string) => void): Promise<THREE.Object3D> {
   let obj: THREE.Object3D;
@@ -742,6 +1080,7 @@ export async function buildMesh(file: File, opts: ShapeOptions, reportProgress?:
     case 'clay': obj = await buildClayMesh(file, opts, reportProgress); break;
     case 'hologram': obj = await buildHologramMesh(file, opts, reportProgress); break;
     case 'blueprint': obj = await buildBlueprintMesh(file, opts, reportProgress); break;
+    case 'studio': obj = await buildStudioMesh(file, opts, reportProgress); break;
     case 'textured':
     default: obj = await buildTexturedMesh(file, opts, reportProgress); break;
   }

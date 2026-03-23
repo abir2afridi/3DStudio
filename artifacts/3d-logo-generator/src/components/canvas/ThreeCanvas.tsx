@@ -205,8 +205,7 @@ export function ThreeCanvas() {
           penumbra={1} 
           angle={Math.PI / 4} 
           color="#ffffff"
-          castShadow={shadowEnabled}
-          shadow-bias={-0.0001}
+          castShadow={false}
         />
 
         {pointLightEnabled && (
